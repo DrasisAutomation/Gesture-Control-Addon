@@ -19,7 +19,7 @@ import sys
 import httpx
 import socketio
 from aiohttp import web
-import aiohttp_cors
+from aiohttp import web
 
 # Configure logging
 logging.basicConfig(
@@ -71,7 +71,7 @@ last_action = ""
 detection_status = "no_hand"
 
 # WebSocket server for frontend
-sio = socketio.AsyncServer(cors_allowed_origins='*')
+sio = socketio.AsyncServer(cors_allowed_origins='*', async_mode='aiohttp')
 app = web.Application()
 sio.attach(app)
 
@@ -409,6 +409,29 @@ async def broadcast_task():
 
 
 # -------------------------------------------------------------------------
+# CORS Middleware (simpler approach without aiohttp_cors)
+# -------------------------------------------------------------------------
+
+@web.middleware
+async def cors_middleware(request, handler):
+    """Add CORS headers to all responses"""
+    response = await handler(request)
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    return response
+
+
+async def options_handler(request):
+    """Handle OPTIONS requests for CORS preflight"""
+    return web.Response(headers={
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    })
+
+
+# -------------------------------------------------------------------------
 # Main Application Setup
 # -------------------------------------------------------------------------
 
@@ -437,22 +460,16 @@ async def main():
     # Start broadcast task
     asyncio.create_task(broadcast_task())
     
+    # Add CORS middleware
+    app.middlewares.append(cors_middleware)
+    
     # Setup HTTP routes
     app.router.add_get('/', index_handler)
     app.router.add_get('/health', health_handler)
     app.router.add_get('/test', test_handler)
-    
-    # Setup CORS
-    cors = aiohttp_cors.setup(app, defaults={
-        "*": aiohttp_cors.ResourceOptions(
-            allow_credentials=True,
-            expose_headers="*",
-            allow_headers="*",
-            allow_methods="*"
-        )
-    })
-    for route in list(app.router.routes()):
-        cors.add(route)
+    app.router.add_options('/', options_handler)
+    app.router.add_options('/health', options_handler)
+    app.router.add_options('/test', options_handler)
     
     # Run web server
     runner = web.AppRunner(app)
