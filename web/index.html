@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Gesture Control - Home Assistant</title>
+    <title>Gesture Control - RTSP Camera</title>
     <style>
         * {
             margin: 0;
@@ -12,478 +12,380 @@
         }
 
         body {
-            background: linear-gradient(135deg, #0a0a2a 0%, #000 100%);
-            min-height: 100vh;
+            background: #000;
+            overflow: hidden;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
         }
 
-        .dashboard {
-            max-width: 1200px;
-            width: 90%;
-            margin: 20px auto;
-            padding: 20px;
+        .container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            background: #000;
         }
 
-        .header {
-            text-align: center;
-            margin-bottom: 40px;
+        #videoStream {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
         }
 
-        .header h1 {
-            color: #fff;
-            font-size: 2rem;
-            margin-bottom: 10px;
-        }
-
-        .header p {
-            color: #888;
-            font-size: 0.9rem;
-        }
-
-        .status-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-
-        .card {
-            background: rgba(0, 0, 0, 0.7);
+        /* Gesture display overlay */
+        .gesture-display {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.85);
             backdrop-filter: blur(10px);
             border-radius: 20px;
-            padding: 20px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 15px 25px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            z-index: 1000;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            min-width: 200px;
+            pointer-events: none;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .current-gesture {
             text-align: center;
         }
 
-        .card-title {
-            font-size: 14px;
-            color: #888;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 15px;
-        }
-
-        .gesture-icon-large {
-            font-size: 120px;
-            margin: 20px 0;
-            filter: drop-shadow(0 0 20px rgba(0, 255, 0, 0.3));
+        .gesture-icon {
+            font-size: 64px;
+            filter: drop-shadow(0 2px 10px rgba(0,0,0,0.5));
             transition: transform 0.2s ease;
         }
 
-        .gesture-name-large {
-            font-size: 32px;
-            font-weight: bold;
-            color: #0f0;
-            margin: 10px 0;
-        }
-
-        .finger-count-large {
-            font-size: 18px;
-            color: #aaa;
-        }
-
-        .status-badge {
-            display: inline-block;
-            padding: 5px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: bold;
-            margin-top: 10px;
-        }
-
-        .status-active {
-            background: rgba(0, 255, 0, 0.2);
-            color: #0f0;
-            border: 1px solid #0f0;
-        }
-
-        .status-waiting {
-            background: rgba(255, 165, 0, 0.2);
-            color: #ffaa00;
-            border: 1px solid #ffaa00;
-        }
-
-        .cooldown-circle {
-            width: 80px;
-            height: 80px;
-            margin: 0 auto;
-            position: relative;
-        }
-
-        .cooldown-number {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            font-size: 28px;
-            font-weight: bold;
-            color: #ffaa00;
-        }
-
-        svg {
-            transform: rotate(-90deg);
-        }
-
-        circle {
-            fill: none;
-            stroke: #ffaa00;
-            stroke-width: 4;
-            stroke-linecap: round;
-        }
-
-        .circle-bg {
-            stroke: rgba(255, 170, 0, 0.2);
-        }
-
-        .guide-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 15px;
-            margin-top: 20px;
-        }
-
-        .guide-card {
-            background: rgba(0, 0, 0, 0.5);
-            border-radius: 15px;
-            padding: 15px;
-            text-align: center;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            transition: all 0.3s ease;
-        }
-
-        .guide-card:hover {
-            border-color: rgba(0, 255, 0, 0.5);
-            transform: translateY(-2px);
-        }
-
-        .guide-icon {
-            font-size: 48px;
-            margin-bottom: 10px;
-        }
-
-        .guide-action {
-            font-size: 14px;
-            font-weight: bold;
-            color: #0f0;
-            margin: 5px 0;
-        }
-
-        .guide-desc {
-            font-size: 11px;
-            color: #888;
-        }
-
-        .connection-status {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            background: rgba(0, 0, 0, 0.8);
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-family: monospace;
-            z-index: 1000;
-        }
-
-        .connection-status.connected {
-            color: #0f0;
-            border-left: 3px solid #0f0;
-        }
-
-        .connection-status.disconnected {
-            color: #ffaa00;
-            border-left: 3px solid #ffaa00;
-        }
-
-        .connection-status.error {
-            color: #f00;
-            border-left: 3px solid #f00;
-        }
-
-        .camera-placeholder {
-            background: rgba(0, 0, 0, 0.5);
-            border-radius: 20px;
-            padding: 40px;
-            text-align: center;
-            margin-bottom: 30px;
-            border: 2px dashed rgba(255, 255, 255, 0.2);
-        }
-
-        .camera-placeholder-icon {
-            font-size: 64px;
-            margin-bottom: 15px;
-        }
-
-        .camera-placeholder-text {
-            color: #888;
-            font-size: 14px;
+        .gesture-icon.pulse {
+            animation: pulse 0.3s ease;
         }
 
         @keyframes pulse {
             0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.05); }
+            50% { transform: scale(1.1); }
         }
 
-        .gesture-pulse {
-            animation: pulse 0.3s ease;
+        .gesture-name {
+            font-size: 20px;
+            font-weight: bold;
+            color: #0f0;
+            margin-top: 5px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .finger-count {
+            font-size: 14px;
+            color: #aaa;
+            margin-top: 5px;
+        }
+
+        .divider {
+            width: 100%;
+            height: 1px;
+            background: rgba(255,255,255,0.2);
+            margin: 5px 0;
+        }
+
+        .gesture-guide {
+            display: flex;
+            gap: 15px;
+            margin-top: 5px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .guide-item {
+            text-align: center;
+        }
+
+        .guide-icon {
+            font-size: 28px;
+            filter: drop-shadow(0 2px 5px rgba(0,0,0,0.5));
+        }
+
+        .guide-text {
+            font-size: 10px;
+            color: #ccc;
+            margin-top: 3px;
+        }
+
+        .status {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.7);
+            padding: 8px 15px;
+            border-radius: 20px;
+            color: #ffaa00;
+            font-family: monospace;
+            font-size: 12px;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+            pointer-events: none;
+        }
+
+        .ha-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.7);
+            padding: 8px 15px;
+            border-radius: 20px;
+            color: #ffaa00;
+            font-family: monospace;
+            font-size: 12px;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+            pointer-events: none;
+        }
+
+        .cooldown {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.7);
+            padding: 8px 15px;
+            border-radius: 20px;
+            color: #ffaa00;
+            font-family: monospace;
+            font-size: 12px;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
         }
 
         @media (max-width: 768px) {
-            .dashboard {
-                width: 95%;
-                padding: 10px;
+            .gesture-display {
+                padding: 10px 15px;
+                min-width: 160px;
             }
-            .gesture-icon-large {
-                font-size: 80px;
+            .gesture-icon {
+                font-size: 48px;
             }
-            .gesture-name-large {
-                font-size: 24px;
+            .gesture-name {
+                font-size: 16px;
             }
             .guide-icon {
-                font-size: 36px;
+                font-size: 22px;
+            }
+            .guide-text {
+                font-size: 9px;
             }
         }
     </style>
 </head>
 <body>
-    <div class="dashboard">
-        <div class="header">
-            <h1>🎮 Gesture Control</h1>
-            <p>Control your lights with hand gestures via RTSP camera</p>
-        </div>
-
-        <div class="camera-placeholder" id="cameraPlaceholder">
-            <div class="camera-placeholder-icon" id="cameraIcon">📹</div>
-            <div class="camera-placeholder-text" id="cameraText">Waiting for RTSP stream...</div>
-        </div>
-
-        <div class="status-grid">
-            <div class="card">
-                <div class="card-title">Current Gesture</div>
-                <div class="gesture-icon-large" id="gestureIcon">🤚</div>
-                <div class="gesture-name-large" id="gestureName">No Hand</div>
-                <div class="finger-count-large" id="fingerCount">Fingers: 0</div>
-                <div>
-                    <span class="status-badge" id="detectionStatus">Waiting</span>
-                </div>
+    <div class="container">
+        <img id="videoStream" src="/video" alt="Camera Stream">
+        
+        <div class="gesture-display">
+            <div class="current-gesture">
+                <div class="gesture-icon" id="gestureIcon">🤚</div>
+                <div class="gesture-name" id="gestureName">No Hand</div>
+                <div class="finger-count" id="fingerCount">Fingers: 0</div>
             </div>
-
-            <div class="card">
-                <div class="card-title">System Status</div>
-                <div id="haStatusText" style="font-size: 24px; margin: 15px 0;">🔌</div>
-                <div id="haStatusDetail" style="color: #888; font-size: 12px;">Connecting to HA...</div>
-                <div id="cameraStatus" style="margin-top: 15px; font-size: 12px; color: #ffaa00;">Camera: Initializing</div>
-            </div>
-
-            <div class="card">
-                <div class="card-title">Cooldown Timer</div>
-                <div class="cooldown-circle">
-                    <svg width="80" height="80">
-                        <circle class="circle-bg" cx="40" cy="40" r="35" />
-                        <circle id="cooldownCircle" cx="40" cy="40" r="35" stroke-dasharray="219.8" stroke-dashoffset="0" />
-                    </svg>
-                    <div class="cooldown-number" id="cooldownNumber">0</div>
-                </div>
-                <div style="margin-top: 10px; font-size: 12px; color: #888;">seconds until next gesture</div>
-            </div>
-        </div>
-
-        <div class="card" style="margin-bottom: 30px;">
-            <div class="card-title">Last Action</div>
-            <div id="lastAction" style="font-size: 20px; font-weight: bold; color: #0f0;">—</div>
-            <div id="lastActionTime" style="font-size: 11px; color: #666; margin-top: 5px;"></div>
-        </div>
-
-        <div class="card">
-            <div class="card-title">Gesture Guide</div>
-            <div class="guide-grid">
-                <div class="guide-card">
+            <div class="divider"></div>
+            <div class="gesture-guide">
+                <div class="guide-item">
                     <div class="guide-icon">✊</div>
-                    <div class="guide-action">Fist (0 fingers)</div>
-                    <div class="guide-desc">Turn ON Strip Light</div>
+                    <div class="guide-text">Fist → Strip ON</div>
                 </div>
-                <div class="guide-card">
+                <div class="guide-item">
                     <div class="guide-icon">✌️</div>
-                    <div class="guide-action">Peace (2 fingers)</div>
-                    <div class="guide-desc">Turn ON Row 3</div>
+                    <div class="guide-text">Peace → Row3 ON</div>
                 </div>
-                <div class="guide-card">
+                <div class="guide-item">
                     <div class="guide-icon">👌</div>
-                    <div class="guide-action">Three (3 fingers)</div>
-                    <div class="guide-desc">Turn OFF Row 3</div>
+                    <div class="guide-text">Three → Row3 OFF</div>
                 </div>
-                <div class="guide-card">
+                <div class="guide-item">
                     <div class="guide-icon">✋</div>
-                    <div class="guide-action">Palm (5 fingers)</div>
-                    <div class="guide-desc">Turn OFF Strip Light</div>
+                    <div class="guide-text">Palm → Strip OFF</div>
                 </div>
             </div>
         </div>
+        
+        <div class="status" id="status">🟡 Connecting to camera...</div>
+        <div class="ha-status" id="haStatus">🔌 HA: Connecting...</div>
+        <div class="cooldown" id="cooldown">⏱️ Ready</div>
     </div>
-
-    <div class="connection-status" id="connectionStatus">🔌 Connecting...</div>
 
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script>
         const gestureIcon = document.getElementById('gestureIcon');
         const gestureName = document.getElementById('gestureName');
         const fingerCount = document.getElementById('fingerCount');
-        const detectionStatus = document.getElementById('detectionStatus');
-        const haStatusText = document.getElementById('haStatusText');
-        const haStatusDetail = document.getElementById('haStatusDetail');
-        const cameraStatus = document.getElementById('cameraStatus');
-        const cameraIcon = document.getElementById('cameraIcon');
-        const cameraText = document.getElementById('cameraText');
-        const lastActionDiv = document.getElementById('lastAction');
-        const lastActionTime = document.getElementById('lastActionTime');
-        const cooldownNumber = document.getElementById('cooldownNumber');
-        const cooldownCircle = document.getElementById('cooldownCircle');
-        const connectionStatusDiv = document.getElementById('connectionStatus');
-        
-        let lastActionTimestamp = null;
-        let lastFingerCount = -1;
-        
-        const circumference = 2 * Math.PI * 35;
-        cooldownCircle.style.strokeDasharray = `${circumference}`;
-        
-        function updateCooldownCircle(seconds, maxSeconds = 2) {
-            const progress = Math.max(0, Math.min(1, seconds / maxSeconds));
-            const dashOffset = circumference * (1 - progress);
-            cooldownCircle.style.strokeDashoffset = dashOffset;
-            cooldownNumber.textContent = seconds > 0 ? seconds.toFixed(1) : '0';
-        }
-        
-        function updateLastAction(action) {
-            if (action && action !== '') {
-                lastActionDiv.textContent = action;
-                lastActionTimestamp = new Date();
-                lastActionTime.textContent = `at ${lastActionTimestamp.toLocaleTimeString()}`;
-                
-                lastActionDiv.style.animation = 'pulse 0.3s ease';
-                setTimeout(() => {
-                    lastActionDiv.style.animation = '';
-                }, 300);
-            }
-        }
-        
-        function updateGestureUI(fingerCountVal, gestureNameVal, gestureIconVal) {
-            if (fingerCountVal !== lastFingerCount) {
-                gestureIcon.classList.add('gesture-pulse');
-                setTimeout(() => gestureIcon.classList.remove('gesture-pulse'), 200);
-                lastFingerCount = fingerCountVal;
-            }
-            
-            gestureIcon.textContent = gestureIconVal;
-            gestureName.textContent = gestureNameVal;
-            fingerCount.textContent = `Fingers: ${fingerCountVal}`;
-        }
+        const statusEl = document.getElementById('status');
+        const haStatusEl = document.getElementById('haStatus');
+        const cooldownEl = document.getElementById('cooldown');
+        const videoStream = document.getElementById('videoStream');
         
         let socket = null;
+        let lastGesture = null;
         
+        // Reload video stream if it fails
+        videoStream.onerror = () => {
+            statusEl.innerHTML = '❌ Camera stream error - reconnecting...';
+            statusEl.style.color = '#f00';
+            setTimeout(() => {
+                videoStream.src = '/video?_=' + Date.now();
+            }, 3000);
+        };
+        
+        videoStream.onload = () => {
+            statusEl.innerHTML = '✅ Camera active - Show your hand!';
+            statusEl.style.color = '#0f0';
+        };
+        
+        // WebSocket connection for gesture data
         function connectWebSocket() {
-            try {
-                socket = io(window.location.origin, {
-                    transports: ['websocket', 'polling'],
-                    reconnection: true,
-                    reconnectionAttempts: 10,
-                    reconnectionDelay: 1000
-                });
+            socket = io(window.location.origin, {
+                transports: ['websocket', 'polling'],
+                reconnection: true,
+                reconnectionAttempts: 10
+            });
+            
+            socket.on('connect', () => {
+                console.log('✅ WebSocket connected');
+                haStatusEl.innerHTML = '✅ HA: Connected';
+                haStatusEl.style.color = '#0f0';
+            });
+            
+            socket.on('disconnect', () => {
+                console.log('❌ WebSocket disconnected');
+                haStatusEl.innerHTML = '🔌 HA: Reconnecting...';
+                haStatusEl.style.color = '#ffaa00';
+            });
+            
+            socket.on('gesture_update', (data) => {
+                // Update UI with gesture data
+                if (data.gestureIcon !== gestureIcon.textContent) {
+                    gestureIcon.classList.add('pulse');
+                    setTimeout(() => gestureIcon.classList.remove('pulse'), 200);
+                }
                 
-                socket.on('connect', () => {
-                    console.log('✅ Connected to backend');
-                    connectionStatusDiv.textContent = '✅ Connected';
-                    connectionStatusDiv.className = 'connection-status connected';
-                    haStatusText.innerHTML = '✅';
-                    haStatusDetail.textContent = 'Connected to HA';
-                    haStatusDetail.style.color = '#0f0';
-                });
+                gestureIcon.textContent = data.gestureIcon;
+                gestureName.textContent = data.gestureName;
+                fingerCount.textContent = `Fingers: ${data.fingerCount}`;
                 
-                socket.on('disconnect', () => {
-                    console.log('❌ Disconnected');
-                    connectionStatusDiv.textContent = '🔌 Disconnected';
-                    connectionStatusDiv.className = 'connection-status disconnected';
-                    haStatusText.innerHTML = '⚠️';
-                    haStatusDetail.textContent = 'Reconnecting...';
-                    haStatusDetail.style.color = '#ffaa00';
-                });
+                // Update status
+                if (data.status === 'detecting') {
+                    statusEl.innerHTML = '🟢 Detecting hand';
+                    statusEl.style.color = '#0f0';
+                } else {
+                    statusEl.innerHTML = '🟡 No hand detected';
+                    statusEl.style.color = '#ffaa00';
+                }
                 
-                socket.on('connect_error', (error) => {
-                    console.error('Connection error:', error);
-                    connectionStatusDiv.textContent = '⚠️ Connection Error';
-                    connectionStatusDiv.className = 'connection-status error';
-                    haStatusText.innerHTML = '❌';
-                    haStatusDetail.textContent = 'Connection failed';
-                    haStatusDetail.style.color = '#f00';
-                });
+                // Update cooldown
+                if (data.cooldownRemaining > 0) {
+                    cooldownEl.innerHTML = `⏱️ Cooldown: ${data.cooldownRemaining.toFixed(1)}s`;
+                    cooldownEl.style.color = '#ffaa00';
+                } else {
+                    cooldownEl.innerHTML = '⚡ Ready';
+                    cooldownEl.style.color = '#0f0';
+                }
                 
-                socket.on('gesture_update', (data) => {
-                    console.log('Gesture update:', data);
-                    
-                    updateGestureUI(data.fingerCount, data.gestureName, data.gestureIcon);
-                    
-                    if (data.status === 'detecting') {
-                        detectionStatus.textContent = 'Detecting';
-                        detectionStatus.className = 'status-badge status-active';
-                    } else {
-                        detectionStatus.textContent = 'No Hand';
-                        detectionStatus.className = 'status-badge status-waiting';
-                    }
-                    
-                    if (data.cooldownRemaining > 0) {
-                        updateCooldownCircle(data.cooldownRemaining, 2);
-                    } else {
-                        updateCooldownCircle(0, 2);
-                    }
-                    
-                    if (data.lastAction && data.lastAction !== '') {
-                        updateLastAction(data.lastAction);
-                    }
-                    
-                    if (data.cameraActive) {
-                        cameraStatus.innerHTML = 'Camera: 🟢 Active';
-                        cameraStatus.style.color = '#0f0';
-                        cameraIcon.textContent = '📹';
-                        cameraText.textContent = 'RTSP stream active - Detecting gestures';
-                    } else {
-                        cameraStatus.innerHTML = 'Camera: 🟡 Waiting for stream';
-                        cameraStatus.style.color = '#ffaa00';
-                        cameraIcon.textContent = '⏳';
-                        cameraText.textContent = 'Waiting for RTSP stream connection...';
-                    }
-                });
-                
-            } catch (error) {
-                console.error('WebSocket error:', error);
-                connectionStatusDiv.textContent = '❌ Error';
-                connectionStatusDiv.className = 'connection-status error';
-            }
+                // Show last action if any
+                if (data.lastAction && data.lastAction !== '') {
+                    const actionMsg = document.createElement('div');
+                    actionMsg.className = 'action-toast';
+                    actionMsg.textContent = `🎯 ${data.lastAction}`;
+                    document.body.appendChild(actionMsg);
+                    setTimeout(() => actionMsg.remove(), 2000);
+                }
+            });
+            
+            socket.on('action_triggered', (data) => {
+                console.log('Action triggered:', data);
+                // Flash the gesture display
+                gestureIcon.style.transform = 'scale(1.2)';
+                setTimeout(() => {
+                    gestureIcon.style.transform = 'scale(1)';
+                }, 200);
+            });
         }
         
+        // Add CSS for action toast
+        const style = document.createElement('style');
+        style.textContent = `
+            .action-toast {
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                background: rgba(0, 255, 0, 0.9);
+                color: #000;
+                padding: 15px 30px;
+                border-radius: 50px;
+                font-size: 24px;
+                font-weight: bold;
+                z-index: 2000;
+                animation: fadeOut 2s ease forwards;
+                pointer-events: none;
+                white-space: nowrap;
+                font-family: monospace;
+            }
+            
+            @keyframes fadeOut {
+                0% {
+                    opacity: 1;
+                    transform: translate(-50%, -50%) scale(1);
+                }
+                70% {
+                    opacity: 1;
+                    transform: translate(-50%, -50%) scale(1.1);
+                }
+                100% {
+                    opacity: 0;
+                    transform: translate(-50%, -50%) scale(1.2);
+                }
+            }
+        `;
+        document.head.appendChild(style);
+        
+        // Initialize
         connectWebSocket();
         
+        // Health check every 10 seconds
         setInterval(async () => {
             try {
                 const response = await fetch('/health');
                 const data = await response.json();
-                if (data.camera_active) {
-                    cameraStatus.innerHTML = 'Camera: 🟢 Active';
-                    cameraStatus.style.color = '#0f0';
-                    cameraIcon.textContent = '📹';
-                    cameraText.textContent = 'RTSP stream active - Detecting gestures';
-                } else {
-                    cameraStatus.innerHTML = 'Camera: 🟡 Inactive';
-                    cameraStatus.style.color = '#ffaa00';
+                if (!data.camera_active) {
+                    statusEl.innerHTML = '⚠️ Camera inactive - reconnecting...';
+                    statusEl.style.color = '#ffaa00';
+                }
+                if (!data.ha_connected) {
+                    haStatusEl.innerHTML = '🔌 HA: Disconnected';
+                    haStatusEl.style.color = '#f00';
                 }
             } catch (e) {
                 console.error('Health check failed:', e);
             }
         }, 10000);
         
-        console.log('Frontend ready - waiting for backend connection');
+        console.log('Frontend ready - waiting for video stream');
     </script>
 </body>
 </html>

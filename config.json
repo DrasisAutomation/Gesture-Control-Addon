@@ -1,36 +1,45 @@
 {
-  "name": "Gesture Control",
-  "version": "1.0.0",
-  "slug": "gesture_control",
-  "description": "Control Home Assistant lights with hand gestures via RTSP camera",
+  "name": "Gesture Control with RTSP",
+  "version": "2.0.0",
+  "slug": "gesture_control_rtsp",
+  "description": "Control Home Assistant lights with hand gestures via RTSP camera with live video feed",
   "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
   "startup": "application",
   "boot": "auto",
   "host_network": true,
   "options": {
     "rtsp_url": "",
+    "ha_url": "ws://homeassistant.local:8123/api/websocket",
+    "ha_token": "",
     "strip_light_entity": "light.strip_light",
     "row_3_entity": "light.row_3",
     "cooldown_seconds": 2,
     "detection_confidence": 0.5,
-    "tracking_confidence": 0.5
+    "tracking_confidence": 0.5,
+    "frame_width": 640,
+    "frame_height": 480,
+    "fps": 15
   },
   "schema": {
     "rtsp_url": "str",
+    "ha_url": "str",
+    "ha_token": "str",
     "strip_light_entity": "str",
     "row_3_entity": "str",
     "cooldown_seconds": "int(1,10)",
     "detection_confidence": "float(0.3,0.9)",
-    "tracking_confidence": "float(0.3,0.9)"
+    "tracking_confidence": "float(0.3,0.9)",
+    "frame_width": "int(320,1280)",
+    "frame_height": "int(240,720)",
+    "fps": "int(5,30)"
   },
   "panel_icon": "mdi:hand-wave",
-  "homeassistant_api": true,
-  "ingress": false,
-  "panel_ingress": false,
+  "ingress": true,
+  "panel_ingress": true,
   "ports": {
     "8099/tcp": 8099
   },
   "ports_description": {
-    "8099/tcp": "Web UI and WebSocket port"
+    "8099/tcp": "Web UI with Video Stream"
   }
 }
