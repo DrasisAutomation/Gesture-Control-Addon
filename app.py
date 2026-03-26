@@ -15,14 +15,14 @@ import json
 import logging
 import threading
 import queue
+import os
+import signal
+import sys
 from datetime import datetime
 import httpx
 import socketio
 from aiohttp import web
 import aiohttp_cors
-import os
-import signal
-import sys
 
 # Configure logging
 logging.basicConfig(
@@ -32,15 +32,31 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Global variables
-RTSP_URL = ""
-STRIP_LIGHT_ENTITY = "light.strip_light"
-ROW_3_ENTITY = "light.row_3"
-COOLDOWN_SECONDS = 2
-DETECTION_CONFIDENCE = 0.5
-TRACKING_CONFIDENCE = 0.5
-FRIGATE_ENABLED = False
-FRIGATE_URL = ""
-FRIGATE_CAMERA = ""
+RTSP_URL = os.environ.get('RTSP_URL', '')
+STRIP_LIGHT_ENTITY = os.environ.get('STRIP_LIGHT_ENTITY', 'light.strip_light')
+ROW_3_ENTITY = os.environ.get('ROW_3_ENTITY', 'light.row_3')
+COOLDOWN_SECONDS = int(os.environ.get('COOLDOWN_SECONDS', 2))
+DETECTION_CONFIDENCE = float(os.environ.get('DETECTION_CONFIDENCE', 0.5))
+TRACKING_CONFIDENCE = float(os.environ.get('TRACKING_CONFIDENCE', 0.5))
+
+# Try to load config from add-on options
+try:
+    with open('/data/options.json', 'r') as f:
+        config = json.load(f)
+        RTSP_URL = config.get('rtsp_url', RTSP_URL)
+        STRIP_LIGHT_ENTITY = config.get('strip_light_entity', STRIP_LIGHT_ENTITY)
+        ROW_3_ENTITY = config.get('row_3_entity', ROW_3_ENTITY)
+        COOLDOWN_SECONDS = config.get('cooldown_seconds', COOLDOWN_SECONDS)
+        DETECTION_CONFIDENCE = config.get('detection_confidence', DETECTION_CONFIDENCE)
+        TRACKING_CONFIDENCE = config.get('tracking_confidence', TRACKING_CONFIDENCE)
+        logger.info(f"Loaded config from /data/options.json")
+except FileNotFoundError:
+    logger.warning("No /data/options.json found, using environment variables")
+
+if not RTSP_URL:
+    logger.error("RTSP_URL not configured! Please set in add-on options.")
+    # Don't exit, let it run with error state
+
 SUPERVISOR_TOKEN = os.environ.get('SUPERVISOR_TOKEN', '')
 SUPERVISOR_API = "http://supervisor/core"
 
@@ -52,7 +68,6 @@ current_gesture_name = "No Hand"
 current_gesture_icon = "🤚"
 last_action = ""
 detection_status = "no_hand"
-person_detected = not FRIGATE_ENABLED  # If Frigate disabled, always detect
 
 # Thread-safe queue for frame processing
 frame_queue = queue.Queue(maxsize=2)
@@ -190,40 +205,16 @@ async def trigger_action(finger_count):
 
 
 # -------------------------------------------------------------------------
-# Frigate Integration (Optional)
-# -------------------------------------------------------------------------
-
-async def check_frigate_person():
-    """Check if Frigate detects a person in the camera"""
-    if not FRIGATE_ENABLED or not FRIGATE_URL or not FRIGATE_CAMERA:
-        return True
-    
-    try:
-        url = f"{FRIGATE_URL}/api/events"
-        params = {
-            "camera": FRIGATE_CAMERA,
-            "label": "person",
-            "in_progress": 1,
-            "limit": 1
-        }
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, params=params, timeout=3.0)
-            if response.status_code == 200:
-                events = response.json()
-                return len(events) > 0
-    except Exception as e:
-        logger.debug(f"Frigate check failed: {e}")
-    
-    return False  # If Frigate fails, default to no person detection
-
-
-# -------------------------------------------------------------------------
 # RTSP Camera Processing Thread
 # -------------------------------------------------------------------------
 
 def camera_processor():
     """Background thread for RTSP camera processing"""
     global current_finger_count, current_gesture_name, current_gesture_icon, detection_status
+    
+    if not RTSP_URL:
+        logger.error("No RTSP URL configured, camera processor stopped")
+        return
     
     mp_hands = mp.solutions.hands
     hands = mp_hands.Hands(
@@ -237,12 +228,14 @@ def camera_processor():
     cap = None
     reconnect_delay = 1
     max_reconnect_delay = 30
+    frame_skip = 0
     
     while True:
         try:
             if cap is None or not cap.isOpened():
-                logger.info(f"Connecting to RTSP: {RTSP_URL}")
+                logger.info(f"Connecting to RTSP: {RTSP_URL[:50]}...")
                 cap = cv2.VideoCapture(RTSP_URL)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer for lower latency
                 if not cap.isOpened():
                     raise Exception("Failed to open RTSP stream")
                 reconnect_delay = 1
@@ -252,36 +245,37 @@ def camera_processor():
             if not ret:
                 raise Exception("Failed to read frame")
             
-            # Flip horizontally for mirror effect (like original)
-            frame = cv2.flip(frame, 1)
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            
-            results = hands.process(rgb_frame)
-            
-            if results.multi_hand_landmarks:
-                detection_status = "detecting"
-                landmarks = results.multi_hand_landmarks[0]
+            # Process every 2nd frame to reduce CPU usage
+            frame_skip = (frame_skip + 1) % 2
+            if frame_skip == 0:
+                # Flip horizontally for mirror effect (like original)
+                frame = cv2.flip(frame, 1)
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 
-                # Count fingers using exact logic
-                finger_count = count_extended_fingers(landmarks)
-                gesture = get_gesture_info(finger_count)
+                results = hands.process(rgb_frame)
                 
-                current_finger_count = finger_count
-                current_gesture_name = gesture['name']
-                current_gesture_icon = gesture['icon']
-                
-                # Trigger HA action (async, but called from thread)
-                # Use asyncio.run_coroutine_threadsafe to schedule in main loop
-                if person_detected:
+                if results.multi_hand_landmarks:
+                    detection_status = "detecting"
+                    landmarks = results.multi_hand_landmarks[0]
+                    
+                    # Count fingers using exact logic
+                    finger_count = count_extended_fingers(landmarks)
+                    gesture = get_gesture_info(finger_count)
+                    
+                    current_finger_count = finger_count
+                    current_gesture_name = gesture['name']
+                    current_gesture_icon = gesture['icon']
+                    
+                    # Trigger HA action (async, but called from thread)
                     loop = asyncio.get_event_loop()
                     asyncio.run_coroutine_threadsafe(
                         trigger_action(finger_count), loop
                     )
-            else:
-                detection_status = "no_hand"
-                current_finger_count = 0
-                current_gesture_name = "No Hand"
-                current_gesture_icon = "🤚"
+                else:
+                    detection_status = "no_hand"
+                    current_finger_count = 0
+                    current_gesture_name = "No Hand"
+                    current_gesture_icon = "🤚"
             
             # Reset reconnect delay on successful frame
             reconnect_delay = 1
@@ -303,35 +297,6 @@ def camera_processor():
 
 
 # -------------------------------------------------------------------------
-# Frigate Monitoring Thread
-# -------------------------------------------------------------------------
-
-async def frigate_monitor():
-    """Monitor Frigate for person detection"""
-    global person_detected
-    
-    if not FRIGATE_ENABLED:
-        person_detected = True
-        return
-    
-    while True:
-        try:
-            person_detected = await check_frigate_person()
-            if person_detected:
-                logger.debug("Person detected by Frigate")
-            else:
-                logger.debug("No person detected by Frigate")
-                # Reset gesture state when no person
-                global current_gesture_name, current_gesture_icon
-                current_gesture_name = "No Person"
-                current_gesture_icon = "🚶"
-        except Exception as e:
-            logger.error(f"Frigate monitor error: {e}")
-        
-        await asyncio.sleep(2)
-
-
-# -------------------------------------------------------------------------
 # WebSocket Events for Frontend
 # -------------------------------------------------------------------------
 
@@ -344,7 +309,6 @@ async def connect(sid, environ):
         'gestureIcon': current_gesture_icon,
         'lastAction': last_action,
         'status': detection_status,
-        'personDetected': person_detected,
         'cooldownRemaining': max(0, COOLDOWN_SECONDS - (time.time() - last_trigger_time)) if last_trigger_time else 0
     }, room=sid)
 
@@ -362,7 +326,6 @@ async def broadcast_gesture_state():
         'gestureIcon': current_gesture_icon,
         'lastAction': last_action,
         'status': detection_status,
-        'personDetected': person_detected,
         'cooldownRemaining': cooldown_remaining
     })
 
@@ -373,18 +336,23 @@ async def broadcast_gesture_state():
 
 async def index_handler(request):
     """Serve the frontend UI"""
-    with open('/app/web/index.html', 'r') as f:
-        content = f.read()
-    return web.Response(text=content, content_type='text/html')
+    try:
+        with open('/app/web/index.html', 'r') as f:
+            content = f.read()
+        return web.Response(text=content, content_type='text/html')
+    except Exception as e:
+        logger.error(f"Error serving index: {e}")
+        return web.Response(text="Error loading UI", status=500)
 
 
 async def health_handler(request):
     """Health check endpoint"""
     return web.json_response({
         'status': 'running',
-        'rtsp_connected': True,  # Simplified
+        'rtsp_configured': bool(RTSP_URL),
         'gesture': current_gesture_name,
-        'finger_count': current_finger_count
+        'finger_count': current_finger_count,
+        'detection_status': detection_status
     })
 
 
@@ -403,50 +371,15 @@ async def broadcast_task():
 # Main Application Setup
 # -------------------------------------------------------------------------
 
-def load_config():
-    """Load configuration from environment or config file"""
-    global RTSP_URL, STRIP_LIGHT_ENTITY, ROW_3_ENTITY, COOLDOWN_SECONDS
-    global DETECTION_CONFIDENCE, TRACKING_CONFIDENCE
-    global FRIGATE_ENABLED, FRIGATE_URL, FRIGATE_CAMERA
-    
-    # In Home Assistant add-on, config is in /data/options.json
-    config_path = "/data/options.json"
-    try:
-        with open(config_path, 'r') as f:
-            config = json.load(f)
-            
-        RTSP_URL = config.get('rtsp_url', '')
-        STRIP_LIGHT_ENTITY = config.get('strip_light_entity', 'light.strip_light')
-        ROW_3_ENTITY = config.get('row_3_entity', 'light.row_3')
-        COOLDOWN_SECONDS = config.get('cooldown_seconds', 2)
-        DETECTION_CONFIDENCE = config.get('detection_confidence', 0.5)
-        TRACKING_CONFIDENCE = config.get('tracking_confidence', 0.5)
-        FRIGATE_ENABLED = config.get('frigate_enabled', False)
-        FRIGATE_URL = config.get('frigate_url', '')
-        FRIGATE_CAMERA = config.get('frigate_camera', '')
-        
-        logger.info(f"Config loaded: RTSP={RTSP_URL[:20]}...")
-        
-    except FileNotFoundError:
-        logger.warning("No config file found, using defaults (RTSP_URL required)")
-        # For development, allow env var
-        RTSP_URL = os.environ.get('RTSP_URL', '')
-    
-    if not RTSP_URL:
-        logger.error("No RTSP URL configured! Please configure in add-on options.")
-
-
 async def main():
     """Main async entry point"""
-    load_config()
-    
-    # Start camera processing thread
-    camera_thread = threading.Thread(target=camera_processor, daemon=True)
-    camera_thread.start()
-    logger.info("Camera processing thread started")
-    
-    # Start Frigate monitor task
-    asyncio.create_task(frigate_monitor())
+    # Start camera processing thread if RTSP is configured
+    if RTSP_URL:
+        camera_thread = threading.Thread(target=camera_processor, daemon=True)
+        camera_thread.start()
+        logger.info("Camera processing thread started")
+    else:
+        logger.warning("No RTSP URL configured. Camera processing disabled. Set rtsp_url in add-on options.")
     
     # Start broadcast task
     asyncio.create_task(broadcast_task())
