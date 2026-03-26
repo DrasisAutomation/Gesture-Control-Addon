@@ -2,9 +2,8 @@
 """
 Gesture Control Add-on with RTSP Camera and Live Video Stream
 - RTSP camera stream processing with MediaPipe Hands
-- MJPEG video streaming to web browser
+- Optimized MJPEG video streaming with error handling
 - WebSocket for real-time gesture updates
-- Accurate finger counting
 """
 
 import asyncio
@@ -20,7 +19,8 @@ import sys
 from aiohttp import web
 import socketio
 import websockets
-import httpx
+from collections import deque
+import io
 
 # Configure logging
 logging.basicConfig(
@@ -60,15 +60,12 @@ try:
             FRAME_HEIGHT = config.get('frame_height', FRAME_HEIGHT)
             FPS = config.get('fps', FPS)
             logger.info("✅ Loaded configuration")
-            logger.info(f"   RTSP URL: {RTSP_URL[:50]}..." if RTSP_URL else "   RTSP URL: NOT CONFIGURED")
-            logger.info(f"   HA URL: {HA_URL}")
-            logger.info(f"   Strip Light: {STRIP_LIGHT_ENTITY}")
-            logger.info(f"   Row 3: {ROW_3_ENTITY}")
 except Exception as e:
     logger.error(f"Error loading config: {e}")
 
 # Global state
 current_frame = None
+current_frame_ready = False
 current_finger_count = 0
 current_gesture_name = "No Hand"
 current_gesture_icon = "🤚"
@@ -78,6 +75,8 @@ camera_active = False
 last_trigger_time = 0
 last_gesture = None
 frame_lock = threading.Lock()
+frame_counter = 0
+last_frame_time = time.time()
 
 # WebSocket server for frontend
 sio = socketio.AsyncServer(cors_allowed_origins='*', async_mode='aiohttp')
@@ -87,7 +86,6 @@ sio.attach(app)
 # HA WebSocket connection
 ha_websocket = None
 ha_connected = False
-ha_task = None
 
 # ============================================================================
 # FINGER COUNTING
@@ -158,12 +156,12 @@ def draw_hand_landmarks(frame, landmarks, finger_count):
     
     # Draw connections
     connections = [
-        [0,1], [1,2], [2,3], [3,4],  # Thumb
-        [0,5], [5,6], [6,7], [7,8],  # Index
-        [0,9], [9,10], [10,11], [11,12],  # Middle
-        [0,13], [13,14], [14,15], [15,16],  # Ring
-        [0,17], [17,18], [18,19], [19,20],  # Pinky
-        [5,9], [9,13], [13,17]  # Palm
+        [0,1], [1,2], [2,3], [3,4],
+        [0,5], [5,6], [6,7], [7,8],
+        [0,9], [9,10], [10,11], [11,12],
+        [0,13], [13,14], [14,15], [15,16],
+        [0,17], [17,18], [18,19], [19,20],
+        [5,9], [9,13], [13,17]
     ]
     
     for connection in connections:
@@ -182,21 +180,10 @@ def draw_hand_landmarks(frame, landmarks, finger_count):
         radius = 6 if is_tip else 4
         cv2.circle(frame, (x, y), radius, color, -1)
     
-    # Draw finger count
-    cv2.putText(frame, f"Fingers: {finger_count}", (10, 50),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-    
-    # Draw cooldown if active
-    now = time.time()
-    if last_trigger_time > 0 and now - last_trigger_time < COOLDOWN_SECONDS:
-        remaining = COOLDOWN_SECONDS - (now - last_trigger_time)
-        cv2.putText(frame, f"Cooldown: {remaining:.1f}s", (10, 90),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
-    
     return frame
 
 # ============================================================================
-# HOME ASSISTANT CONNECTION (FIXED)
+# HOME ASSISTANT CONNECTION
 # ============================================================================
 
 async def connect_ha():
@@ -208,35 +195,26 @@ async def connect_ha():
             logger.info(f"🔌 Connecting to Home Assistant at {HA_URL}")
             ha_websocket = await websockets.connect(HA_URL)
             
-            # Wait for auth_required message
             response = await ha_websocket.recv()
             data = json.loads(response)
-            logger.debug(f"HA initial message: {data}")
             
             if data.get("type") == "auth_required":
-                # Send authentication
                 auth_msg = {
                     "type": "auth",
                     "access_token": HA_TOKEN
                 }
                 await ha_websocket.send(json.dumps(auth_msg))
-                logger.info("📤 Sent authentication to HA")
                 
-                # Wait for auth response
                 response = await ha_websocket.recv()
                 data = json.loads(response)
-                logger.debug(f"HA auth response: {data}")
                 
                 if data.get("type") == "auth_ok":
                     ha_connected = True
-                    logger.info("✅ Successfully connected to Home Assistant")
-                    
-                    # Start listener
+                    logger.info("✅ Connected to Home Assistant")
                     asyncio.create_task(ha_listener())
                     break
                 else:
                     logger.error(f"HA auth failed: {data}")
-                    ha_connected = False
             else:
                 logger.error(f"Unexpected HA message: {data}")
                 
@@ -244,22 +222,16 @@ async def connect_ha():
             logger.error(f"HA connection error: {e}")
             ha_connected = False
         
-        # Wait before reconnecting
         await asyncio.sleep(10)
 
 async def ha_listener():
     """Listen for HA messages"""
     global ha_websocket, ha_connected
-    
     try:
         async for message in ha_websocket:
             data = json.loads(message)
-            logger.debug(f"HA message: {data}")
-            # Handle subscription responses if needed
             if data.get("type") == "pong":
                 pass
-            elif data.get("type") == "result":
-                logger.debug(f"HA result: {data}")
     except Exception as e:
         logger.error(f"HA listener error: {e}")
         ha_connected = False
@@ -270,41 +242,20 @@ async def call_ha_service(service, entity_id):
     global ha_websocket, ha_connected
     
     if not ha_connected or not ha_websocket:
-        logger.warning("HA not connected, cannot call service")
         return False
     
     try:
-        # Generate unique ID
         msg_id = int(time.time() * 1000)
-        
         message = {
             "id": msg_id,
             "type": "call_service",
             "domain": "light",
             "service": service,
-            "service_data": {
-                "entity_id": entity_id
-            }
+            "service_data": {"entity_id": entity_id}
         }
         
         await ha_websocket.send(json.dumps(message))
-        logger.info(f"✅ Called {service} on {entity_id}")
-        
-        # Wait for result (optional)
-        try:
-            response = await asyncio.wait_for(ha_websocket.recv(), timeout=5.0)
-            result = json.loads(response)
-            if result.get("type") == "result":
-                if result.get("success"):
-                    logger.info(f"✅ Service call successful")
-                    return True
-                else:
-                    logger.error(f"Service call failed: {result}")
-                    return False
-        except asyncio.TimeoutError:
-            logger.warning("No response from HA, but command was sent")
-            return True
-            
+        logger.info(f"✅ {service} → {entity_id}")
         return True
     except Exception as e:
         logger.error(f"HA call error: {e}")
@@ -317,7 +268,6 @@ async def trigger_action(finger_count):
     
     now = time.time()
     
-    # Cooldown check
     if last_gesture == finger_count and (now - last_trigger_time) < COOLDOWN_SECONDS:
         return None
     
@@ -326,22 +276,22 @@ async def trigger_action(finger_count):
     service = None
     action_description = None
     
-    if finger_count == 0:  # Fist
+    if finger_count == 0:
         action = "turn_on"
         entity = STRIP_LIGHT_ENTITY
         service = "turn_on"
         action_description = "ON Strip Light"
-    elif finger_count == 2:  # Peace
+    elif finger_count == 2:
         action = "turn_on"
         entity = ROW_3_ENTITY
         service = "turn_on"
         action_description = "ON Row 3"
-    elif finger_count == 3:  # Three
+    elif finger_count == 3:
         action = "turn_off"
         entity = ROW_3_ENTITY
         service = "turn_off"
         action_description = "OFF Row 3"
-    elif finger_count == 5:  # Palm
+    elif finger_count == 5:
         action = "turn_off"
         entity = STRIP_LIGHT_ENTITY
         service = "turn_off"
@@ -352,11 +302,10 @@ async def trigger_action(finger_count):
         last_trigger_time = now
         last_action = action_description
         
-        logger.info(f"🎯 Triggering: {action_description}")
+        logger.info(f"🎯 {action_description}")
         success = await call_ha_service(service, entity)
         
         if success:
-            # Broadcast action to all clients
             await sio.emit('action_triggered', {
                 'action': action_description,
                 'fingerCount': finger_count
@@ -366,36 +315,39 @@ async def trigger_action(finger_count):
     return None
 
 # ============================================================================
-# CAMERA PROCESSING THREAD
+# IMPROVED CAMERA PROCESSING WITH ERROR HANDLING
 # ============================================================================
 
 def camera_processor():
-    """Background thread for RTSP camera processing"""
-    global current_frame, current_finger_count, current_gesture_name, current_gesture_icon
-    global detection_status, camera_active, last_trigger_time, last_gesture
+    """Background thread for RTSP camera processing with improved stability"""
+    global current_frame, current_frame_ready, current_finger_count, current_gesture_name
+    global current_gesture_icon, detection_status, camera_active, frame_counter, last_frame_time
     
     if not RTSP_URL:
         logger.error("❌ No RTSP URL configured")
         return
     
     logger.info("📹 Starting camera processor")
-    logger.info(f"   Resolution: {FRAME_WIDTH}x{FRAME_HEIGHT}")
-    logger.info(f"   FPS: {FPS}")
     
     # Initialize MediaPipe Hands
     mp_hands = mp.solutions.hands
     hands = mp_hands.Hands(
         static_image_mode=False,
         max_num_hands=1,
-        model_complexity=1,
+        model_complexity=0,  # Use lighter model for better performance
         min_detection_confidence=DETECTION_CONFIDENCE,
         min_tracking_confidence=TRACKING_CONFIDENCE
     )
     
     cap = None
     reconnect_delay = 1
-    frame_counter = 0
-    detection_counter = 0
+    stable_frame_count = 0
+    last_valid_frame = None
+    
+    # Create a blank frame for when camera is disconnected
+    blank_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
+    cv2.putText(blank_frame, "Connecting to camera...", (50, FRAME_HEIGHT // 2),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
     
     # Get event loop for async operations
     try:
@@ -408,8 +360,14 @@ def camera_processor():
         try:
             if cap is None or not cap.isOpened():
                 logger.info("🔌 Connecting to RTSP stream...")
+                
+                # Show connecting message
+                with frame_lock:
+                    current_frame = blank_frame.copy()
+                    current_frame_ready = True
+                
                 cap = cv2.VideoCapture(RTSP_URL)
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
                 
@@ -419,28 +377,33 @@ def camera_processor():
                 logger.info("✅ RTSP stream connected")
                 camera_active = True
                 reconnect_delay = 1
+                stable_frame_count = 0
             
             ret, frame = cap.read()
             if not ret:
                 raise Exception("Failed to read frame")
             
-            frame_counter += 1
+            stable_frame_count += 1
             
-            # Resize and flip
+            # Skip first few frames to let stream stabilize
+            if stable_frame_count < 5:
+                time.sleep(0.05)
+                continue
+            
+            # Resize and process
             frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
             frame = cv2.flip(frame, 1)
+            
+            # Convert to RGB for MediaPipe
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             
             # Process with MediaPipe
             results = hands.process(rgb_frame)
             
-            detection_frame = frame.copy()
+            # Create output frame
+            output_frame = frame.copy()
             
             if results.multi_hand_landmarks:
-                detection_counter += 1
-                if detection_counter % 30 == 0:  # Log every 30 detections
-                    logger.info(f"✋ Hand detected! (Total: {detection_counter})")
-                
                 detection_status = "detecting"
                 hand_landmarks = results.multi_hand_landmarks[0]
                 
@@ -448,24 +411,22 @@ def camera_processor():
                 finger_count = count_extended_fingers(hand_landmarks)
                 gesture = get_gesture_info(finger_count)
                 
-                # Update global state
-                if current_finger_count != finger_count:
-                    logger.info(f"🖐️ Gesture changed: {current_finger_count} → {finger_count} fingers ({gesture['name']})")
+                if current_finger_count != finger_count and finger_count > 0:
+                    logger.info(f"🖐️ Gesture: {finger_count} fingers ({gesture['name']})")
                 
                 current_finger_count = finger_count
                 current_gesture_name = gesture['name']
                 current_gesture_icon = gesture['icon']
                 
-                # Draw landmarks on frame
+                # Draw landmarks
                 landmarks_list = []
                 for i in range(21):
                     landmarks_list.append(hand_landmarks.landmark[i])
-                detection_frame = draw_hand_landmarks(detection_frame, landmarks_list, finger_count)
+                output_frame = draw_hand_landmarks(output_frame, landmarks_list, finger_count)
                 
-                # Trigger action (async)
+                # Trigger action
                 future = asyncio.run_coroutine_threadsafe(
-                    trigger_action(finger_count), 
-                    loop
+                    trigger_action(finger_count), loop
                 )
                 future.add_done_callback(lambda f: None)
             else:
@@ -473,70 +434,122 @@ def camera_processor():
                 current_finger_count = 0
                 current_gesture_name = "No Hand"
                 current_gesture_icon = "🤚"
-                # Draw status on frame
-                cv2.putText(detection_frame, "No Hand Detected", (10, 50),
+                cv2.putText(output_frame, "No Hand Detected", (10, 50),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
             
-            # Add gesture name and HA status to frame
-            cv2.putText(detection_frame, f"Gesture: {current_gesture_name}", (10, FRAME_HEIGHT - 50),
+            # Add overlay information
+            # Gesture name
+            cv2.putText(output_frame, f"Gesture: {current_gesture_name}", (10, FRAME_HEIGHT - 50),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             
-            ha_status_text = "HA: Connected" if ha_connected else "HA: Disconnected"
-            cv2.putText(detection_frame, ha_status_text, (10, FRAME_HEIGHT - 20),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0) if ha_connected else (0, 0, 255), 2)
+            # Finger count
+            cv2.putText(output_frame, f"Fingers: {current_finger_count}", (10, FRAME_HEIGHT - 25),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
             
-            # Update current frame
+            # HA Status
+            ha_text = "HA: Connected" if ha_connected else "HA: Disconnected"
+            ha_color = (0, 255, 0) if ha_connected else (0, 0, 255)
+            cv2.putText(output_frame, ha_text, (FRAME_WIDTH - 150, 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, ha_color, 1)
+            
+            # Cooldown
+            if last_trigger_time > 0:
+                remaining = COOLDOWN_SECONDS - (time.time() - last_trigger_time)
+                if remaining > 0:
+                    cv2.putText(output_frame, f"Cooldown: {remaining:.1f}s", (10, 90),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
+            
+            # Update frame counter for FPS
+            frame_counter += 1
+            now = time.time()
+            if now - last_frame_time >= 1.0:
+                fps = frame_counter / (now - last_frame_time)
+                cv2.putText(output_frame, f"FPS: {fps:.1f}", (FRAME_WIDTH - 80, FRAME_HEIGHT - 10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+                frame_counter = 0
+                last_frame_time = now
+            
+            # Store the processed frame
             with frame_lock:
-                current_frame = detection_frame.copy()
+                current_frame = output_frame.copy()
+                current_frame_ready = True
             
-            # Reset reconnect delay
-            reconnect_delay = 1
+            # Control frame rate
+            time.sleep(1.0 / FPS)
             
         except Exception as e:
             logger.error(f"❌ Camera error: {e}")
             camera_active = False
+            
+            # Show error frame
+            error_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
+            cv2.putText(error_frame, f"Camera Error: Reconnecting in {reconnect_delay}s", 
+                       (10, FRAME_HEIGHT // 2), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+            
+            with frame_lock:
+                current_frame = error_frame.copy()
+                current_frame_ready = True
+            
             if cap:
                 cap.release()
                 cap = None
+            
             time.sleep(reconnect_delay)
             reconnect_delay = min(reconnect_delay * 2, 30)
 
 # ============================================================================
-# VIDEO STREAM HANDLER
+# OPTIMIZED VIDEO STREAM HANDLER
 # ============================================================================
 
 async def video_stream(request):
-    """MJPEG video stream endpoint"""
+    """MJPEG video stream with better error handling"""
     response = web.StreamResponse()
-    response.headers['Content-Type'] = 'multipart/x-mixed-replace; boundary=frame'
+    response.headers.update({
+        'Content-Type': 'multipart/x-mixed-replace; boundary=--jpgboundary',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+    })
     await response.prepare(request)
     
-    while True:
-        try:
+    last_frame_sent = None
+    frame_count = 0
+    
+    try:
+        while True:
             with frame_lock:
-                if current_frame is not None:
+                if current_frame_ready and current_frame is not None:
                     frame = current_frame.copy()
                 else:
                     await asyncio.sleep(0.05)
                     continue
             
-            # Encode frame as JPEG
-            _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            # Only send if frame changed (reduce bandwidth)
+            frame_hash = hash(frame.tobytes())
+            if last_frame_sent == frame_hash and frame_count % 3 != 0:
+                await asyncio.sleep(1.0 / FPS)
+                continue
+            
+            last_frame_sent = frame_hash
+            frame_count += 1
+            
+            # Encode frame with good quality
+            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 75]
+            _, jpeg = cv2.imencode('.jpg', frame, encode_param)
             frame_data = jpeg.tobytes()
             
-            # Write frame to stream
-            await response.write(b'--frame\r\n')
+            # Send frame
+            await response.write(b'--jpgboundary\r\n')
             await response.write(b'Content-Type: image/jpeg\r\n')
             await response.write(f'Content-Length: {len(frame_data)}\r\n\r\n'.encode())
             await response.write(frame_data)
             await response.write(b'\r\n')
             
             # Control frame rate
-            await asyncio.sleep(1 / FPS)
+            await asyncio.sleep(1.0 / FPS)
             
-        except Exception as e:
-            logger.error(f"Stream error: {e}")
-            break
+    except Exception as e:
+        logger.error(f"Stream error: {e}")
     
     return response
 
@@ -547,6 +560,7 @@ async def video_stream(request):
 @sio.on('connect')
 async def connect(sid, environ):
     logger.info(f"🟢 Frontend connected: {sid}")
+    cooldown = max(0, COOLDOWN_SECONDS - (time.time() - last_trigger_time)) if last_trigger_time else 0
     await sio.emit('gesture_update', {
         'fingerCount': current_finger_count,
         'gestureName': current_gesture_name,
@@ -555,7 +569,7 @@ async def connect(sid, environ):
         'status': detection_status,
         'cameraActive': camera_active,
         'haConnected': ha_connected,
-        'cooldownRemaining': max(0, COOLDOWN_SECONDS - (time.time() - last_trigger_time)) if last_trigger_time else 0
+        'cooldownRemaining': cooldown
     }, room=sid)
 
 @sio.on('disconnect')
@@ -566,10 +580,7 @@ async def broadcast_state():
     """Broadcast current state to all clients"""
     while True:
         try:
-            cooldown = 0
-            if last_trigger_time:
-                remaining = COOLDOWN_SECONDS - (time.time() - last_trigger_time)
-                cooldown = max(0, remaining)
+            cooldown = max(0, COOLDOWN_SECONDS - (time.time() - last_trigger_time)) if last_trigger_time else 0
             
             await sio.emit('gesture_update', {
                 'fingerCount': current_finger_count,
@@ -591,29 +602,25 @@ async def broadcast_state():
 
 async def index_handler(request):
     """Serve the frontend UI"""
-    html_path = '/app/web/index.html'
-    try:
-        if os.path.exists(html_path):
-            with open(html_path, 'r', encoding='utf-8') as f:
+    html_paths = [
+        '/app/web/index.html',
+        './web/index.html',
+        os.path.join(os.path.dirname(__file__), 'web', 'index.html')
+    ]
+    
+    html_content = None
+    for path in html_paths:
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
                 html_content = f.read()
-        else:
-            html_content = get_embedded_html()
-        
-        return web.Response(text=html_content, content_type='text/html')
-    except Exception as e:
-        logger.error(f"Error serving index: {e}")
-        return web.Response(text=f"Error: {e}", status=500)
-
-def get_embedded_html():
-    """Return embedded HTML"""
-    return """<!DOCTYPE html>
-<html>
-<head><title>Gesture Control</title></head>
-<body>
-    <h1>Gesture Control Add-on</h1>
-    <p>Please ensure web/index.html exists</p>
-</body>
-</html>"""
+            break
+    
+    if not html_content:
+        html_content = """<!DOCTYPE html>
+<html><head><title>Gesture Control</title></head>
+<body><h1>Gesture Control Add-on</h1><p>Loading...</p></body></html>"""
+    
+    return web.Response(text=html_content, content_type='text/html')
 
 async def health_handler(request):
     """Health check endpoint"""
@@ -635,31 +642,23 @@ async def main():
     logger.info("=" * 60)
     logger.info("🎮 Gesture Control Add-on with RTSP Camera")
     logger.info("=" * 60)
-    logger.info(f"📹 RTSP URL: {'✅ Configured' if RTSP_URL else '❌ NOT CONFIGURED'}")
-    logger.info(f"🔌 HA URL: {HA_URL}")
-    logger.info(f"💡 Strip Light: {STRIP_LIGHT_ENTITY}")
+    logger.info(f"📹 RTSP: {'✅' if RTSP_URL else '❌'}")
+    logger.info(f"🔌 HA: {HA_URL}")
+    logger.info(f"💡 Strip: {STRIP_LIGHT_ENTITY}")
     logger.info(f"💡 Row 3: {ROW_3_ENTITY}")
-    logger.info(f"⏱️  Cooldown: {COOLDOWN_SECONDS}s")
-    logger.info(f"📐 Resolution: {FRAME_WIDTH}x{FRAME_HEIGHT}")
-    logger.info(f"🎯 FPS: {FPS}")
     logger.info("=" * 60)
     
-    # Connect to Home Assistant
+    # Connect to HA
     if HA_TOKEN:
         asyncio.create_task(connect_ha())
-        logger.info("✅ HA connection task started")
-    else:
-        logger.warning("⚠️ No HA token configured")
     
     # Start camera thread
     if RTSP_URL:
         camera_thread = threading.Thread(target=camera_processor, daemon=True)
         camera_thread.start()
         logger.info("✅ Camera thread started")
-    else:
-        logger.warning("⚠️ No RTSP URL configured")
     
-    # Start broadcast task
+    # Start broadcast
     asyncio.create_task(broadcast_state())
     
     # Setup routes
@@ -674,9 +673,8 @@ async def main():
     await site.start()
     
     logger.info("=" * 60)
-    logger.info("🌐 Web server started on port 8099")
-    logger.info(f"📍 Access the UI at: http://[YOUR-IP]:8099/")
-    logger.info(f"🎥 Video stream at: http://[YOUR-IP]:8099/video")
+    logger.info("🌐 Server: http://0.0.0.0:8099")
+    logger.info("🎥 Video: http://[IP]:8099/video")
     logger.info("=" * 60)
     
     await asyncio.Event().wait()
