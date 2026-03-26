@@ -17,12 +17,10 @@ import logging
 import threading
 import os
 import sys
-import base64
 from aiohttp import web
 import socketio
+import websockets
 import httpx
-from PIL import Image
-import io
 
 # Configure logging
 logging.basicConfig(
@@ -81,14 +79,15 @@ last_trigger_time = 0
 last_gesture = None
 frame_lock = threading.Lock()
 
-# WebSocket server
+# WebSocket server for frontend
 sio = socketio.AsyncServer(cors_allowed_origins='*', async_mode='aiohttp')
 app = web.Application()
 sio.attach(app)
 
 # HA WebSocket connection
-ha_socket = None
+ha_websocket = None
 ha_connected = False
+ha_task = None
 
 # ============================================================================
 # FINGER COUNTING
@@ -197,49 +196,70 @@ def draw_hand_landmarks(frame, landmarks, finger_count):
     return frame
 
 # ============================================================================
-# HOME ASSISTANT CONNECTION
+# HOME ASSISTANT CONNECTION (FIXED)
 # ============================================================================
 
 async def connect_ha():
     """Connect to Home Assistant WebSocket"""
-    global ha_socket, ha_connected
+    global ha_websocket, ha_connected
     
     while True:
         try:
-            import websockets
-            ha_socket = await websockets.connect(HA_URL)
+            logger.info(f"🔌 Connecting to Home Assistant at {HA_URL}")
+            ha_websocket = await websockets.connect(HA_URL)
             
-            # Authenticate
-            await ha_socket.send(json.dumps({
-                "type": "auth",
-                "access_token": HA_TOKEN
-            }))
-            
-            response = await ha_socket.recv()
+            # Wait for auth_required message
+            response = await ha_websocket.recv()
             data = json.loads(response)
+            logger.debug(f"HA initial message: {data}")
             
-            if data.get("type") == "auth_ok":
-                ha_connected = True
-                logger.info("✅ Connected to Home Assistant")
+            if data.get("type") == "auth_required":
+                # Send authentication
+                auth_msg = {
+                    "type": "auth",
+                    "access_token": HA_TOKEN
+                }
+                await ha_websocket.send(json.dumps(auth_msg))
+                logger.info("📤 Sent authentication to HA")
                 
-                # Start listening for messages
-                asyncio.create_task(ha_listener())
-                break
+                # Wait for auth response
+                response = await ha_websocket.recv()
+                data = json.loads(response)
+                logger.debug(f"HA auth response: {data}")
+                
+                if data.get("type") == "auth_ok":
+                    ha_connected = True
+                    logger.info("✅ Successfully connected to Home Assistant")
+                    
+                    # Start listener
+                    asyncio.create_task(ha_listener())
+                    break
+                else:
+                    logger.error(f"HA auth failed: {data}")
+                    ha_connected = False
             else:
-                logger.error(f"HA auth failed: {data}")
-                await asyncio.sleep(10)
+                logger.error(f"Unexpected HA message: {data}")
                 
         except Exception as e:
             logger.error(f"HA connection error: {e}")
-            await asyncio.sleep(10)
+            ha_connected = False
+        
+        # Wait before reconnecting
+        await asyncio.sleep(10)
 
 async def ha_listener():
     """Listen for HA messages"""
-    global ha_socket, ha_connected
+    global ha_websocket, ha_connected
+    
     try:
-        async for message in ha_socket:
+        async for message in ha_websocket:
             data = json.loads(message)
-            # Handle any responses if needed
+            logger.debug(f"HA message: {data}")
+            # Handle subscription responses if needed
+            if data.get("type") == "pong":
+                pass
+            elif data.get("type") == "result":
+                logger.debug(f"HA result: {data}")
     except Exception as e:
         logger.error(f"HA listener error: {e}")
         ha_connected = False
@@ -247,15 +267,18 @@ async def ha_listener():
 
 async def call_ha_service(service, entity_id):
     """Call Home Assistant service"""
-    global ha_socket, ha_connected
+    global ha_websocket, ha_connected
     
-    if not ha_connected or not ha_socket:
-        logger.warning("HA not connected")
+    if not ha_connected or not ha_websocket:
+        logger.warning("HA not connected, cannot call service")
         return False
     
     try:
+        # Generate unique ID
+        msg_id = int(time.time() * 1000)
+        
         message = {
-            "id": int(time.time() * 1000),
+            "id": msg_id,
             "type": "call_service",
             "domain": "light",
             "service": service,
@@ -263,8 +286,25 @@ async def call_ha_service(service, entity_id):
                 "entity_id": entity_id
             }
         }
-        await ha_socket.send(json.dumps(message))
-        logger.info(f"✅ {service} → {entity_id}")
+        
+        await ha_websocket.send(json.dumps(message))
+        logger.info(f"✅ Called {service} on {entity_id}")
+        
+        # Wait for result (optional)
+        try:
+            response = await asyncio.wait_for(ha_websocket.recv(), timeout=5.0)
+            result = json.loads(response)
+            if result.get("type") == "result":
+                if result.get("success"):
+                    logger.info(f"✅ Service call successful")
+                    return True
+                else:
+                    logger.error(f"Service call failed: {result}")
+                    return False
+        except asyncio.TimeoutError:
+            logger.warning("No response from HA, but command was sent")
+            return True
+            
         return True
     except Exception as e:
         logger.error(f"HA call error: {e}")
@@ -354,8 +394,8 @@ def camera_processor():
     
     cap = None
     reconnect_delay = 1
-    frame_skip = max(1, int(30 / FPS))  # Skip frames to achieve target FPS
     frame_counter = 0
+    detection_counter = 0
     
     # Get event loop for async operations
     try:
@@ -386,7 +426,7 @@ def camera_processor():
             
             frame_counter += 1
             
-            # Process every frame for smooth video
+            # Resize and flip
             frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
             frame = cv2.flip(frame, 1)
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -397,6 +437,10 @@ def camera_processor():
             detection_frame = frame.copy()
             
             if results.multi_hand_landmarks:
+                detection_counter += 1
+                if detection_counter % 30 == 0:  # Log every 30 detections
+                    logger.info(f"✋ Hand detected! (Total: {detection_counter})")
+                
                 detection_status = "detecting"
                 hand_landmarks = results.multi_hand_landmarks[0]
                 
@@ -406,7 +450,7 @@ def camera_processor():
                 
                 # Update global state
                 if current_finger_count != finger_count:
-                    logger.debug(f"Gesture: {finger_count} fingers ({gesture['name']})")
+                    logger.info(f"🖐️ Gesture changed: {current_finger_count} → {finger_count} fingers ({gesture['name']})")
                 
                 current_finger_count = finger_count
                 current_gesture_name = gesture['name']
@@ -433,9 +477,13 @@ def camera_processor():
                 cv2.putText(detection_frame, "No Hand Detected", (10, 50),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
             
-            # Add gesture name to frame
-            cv2.putText(detection_frame, f"Gesture: {current_gesture_name}", (10, FRAME_HEIGHT - 20),
+            # Add gesture name and HA status to frame
+            cv2.putText(detection_frame, f"Gesture: {current_gesture_name}", (10, FRAME_HEIGHT - 50),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            
+            ha_status_text = "HA: Connected" if ha_connected else "HA: Disconnected"
+            cv2.putText(detection_frame, ha_status_text, (10, FRAME_HEIGHT - 20),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0) if ha_connected else (0, 0, 255), 2)
             
             # Update current frame
             with frame_lock:
@@ -506,6 +554,7 @@ async def connect(sid, environ):
         'lastAction': last_action,
         'status': detection_status,
         'cameraActive': camera_active,
+        'haConnected': ha_connected,
         'cooldownRemaining': max(0, COOLDOWN_SECONDS - (time.time() - last_trigger_time)) if last_trigger_time else 0
     }, room=sid)
 
@@ -529,6 +578,7 @@ async def broadcast_state():
                 'lastAction': last_action,
                 'status': detection_status,
                 'cameraActive': camera_active,
+                'haConnected': ha_connected,
                 'cooldownRemaining': cooldown
             })
         except Exception as e:
@@ -597,6 +647,7 @@ async def main():
     # Connect to Home Assistant
     if HA_TOKEN:
         asyncio.create_task(connect_ha())
+        logger.info("✅ HA connection task started")
     else:
         logger.warning("⚠️ No HA token configured")
     
