@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Gesture Control - Home Assistant Integration</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #000;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        /* Background visual effect (no camera feed) */
+        .background-effect {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at center, #1a1a2e 0%, #000 100%);
+            z-index: 1;
+        }
+
+        .background-effect::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: repeating-linear-gradient(
+                45deg,
+                rgba(255, 255, 255, 0.02) 0px,
+                rgba(255, 255, 255, 0.02) 2px,
+                transparent 2px,
+                transparent 8px
+            );
+            pointer-events: none;
+        }
+
+        .container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #000;
+            z-index: 2;
+        }
+
+        /* Placeholder visualization for hand detection */
+        .hand-placeholder {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 5;
+            pointer-events: none;
+        }
+
+        .hand-icon-large {
+            font-size: 120px;
+            filter: drop-shadow(0 0 20px rgba(0, 255, 0, 0.3));
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.6; transform: scale(1); }
+            50% { opacity: 1; transform: scale(1.05); }
+        }
+
+        .detection-hint {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 14px;
+            margin-top: 20px;
+            letter-spacing: 1px;
+        }
+
+        /* Gesture display at bottom right corner - EXACT same as original */
+        .gesture-display {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 15px 25px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            z-index: 1000;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            min-width: 180px;
+            pointer-events: none;
+        }
+
+        .current-gesture {
+            text-align: center;
+        }
+
+        .gesture-icon {
+            font-size: 64px;
+            filter: drop-shadow(0 2px 10px rgba(0,0,0,0.5));
+            transition: transform 0.1s ease;
+        }
+
+        .gesture-name {
+            font-size: 20px;
+            font-weight: bold;
+            color: #fff;
+            margin-top: 5px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .finger-count {
+            font-size: 14px;
+            color: #aaa;
+            margin-top: 5px;
+        }
+
+        .divider {
+            width: 100%;
+            height: 1px;
+            background: rgba(255,255,255,0.2);
+            margin: 5px 0;
+        }
+
+        .gesture-guide {
+            display: flex;
+            gap: 20px;
+            margin-top: 5px;
+        }
+
+        .guide-item {
+            text-align: center;
+        }
+
+        .guide-icon {
+            font-size: 28px;
+            filter: drop-shadow(0 2px 5px rgba(0,0,0,0.5));
+        }
+
+        .guide-text {
+            font-size: 10px;
+            color: #ccc;
+            margin-top: 3px;
+        }
+
+        .status {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.7);
+            padding: 8px 15px;
+            border-radius: 20px;
+            color: #0f0;
+            font-family: monospace;
+            font-size: 12px;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+            pointer-events: none;
+        }
+
+        .ha-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.7);
+            padding: 8px 15px;
+            border-radius: 20px;
+            color: #ffaa00;
+            font-family: monospace;
+            font-size: 12px;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+            pointer-events: none;
+        }
+
+        .cooldown-timer {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.6);
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-family: monospace;
+            font-size: 11px;
+            color: #ffaa00;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+            pointer-events: none;
+        }
+
+        @media (max-width: 768px) {
+            .gesture-display {
+                padding: 10px 15px;
+                min-width: 140px;
+            }
+            .gesture-icon {
+                font-size: 48px;
+            }
+            .gesture-name {
+                font-size: 16px;
+            }
+            .guide-icon {
+                font-size: 22px;
+            }
+            .status, .ha-status {
+                font-size: 10px;
+                padding: 5px 10px;
+            }
+            .hand-icon-large {
+                font-size: 80px;
+            }
+            .detection-hint {
+                font-size: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="background-effect"></div>
+    <div class="container">
+        <!-- Visual placeholder (no camera feed) -->
+        <div class="hand-placeholder">
+            <div class="hand-icon-large" id="placeholderIcon">🤚</div>
+            <div class="detection-hint" id="detectionHint">Waiting for gesture data...</div>
+        </div>
+        
+        <div class="gesture-display">
+            <div class="current-gesture">
+                <div class="gesture-icon" id="gestureIcon">🤚</div>
+                <div class="gesture-name" id="gestureName">No Hand</div>
+                <div class="finger-count" id="fingerCount">Fingers: 0</div>
+            </div>
+            <div class="divider"></div>
+            <div class="gesture-guide">
+                <div class="guide-item">
+                    <div class="guide-icon">✊</div>
+                    <div class="guide-text">Fist → Strip ON</div>
+                </div>
+                <div class="guide-item">
+                    <div class="guide-icon">✌️</div>
+                    <div class="guide-text">2 Fingers → Row3 ON</div>
+                </div>
+                <div class="guide-item">
+                    <div class="guide-icon">👌</div>
+                    <div class="guide-text">3 Fingers → Row3 OFF</div>
+                </div>
+                <div class="guide-item">
+                    <div class="guide-icon">✋</div>
+                    <div class="guide-text">Palm → Strip OFF</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="status" id="status">Connecting to backend...</div>
+        <div class="ha-status" id="haStatus">HA: Connected ✓</div>
+        <div class="cooldown-timer" id="cooldownTimer">Cooldown: Ready</div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script>
+        // DOM Elements
+        const gestureIconEl = document.getElementById('gestureIcon');
+        const gestureNameEl = document.getElementById('gestureName');
+        const fingerCountEl = document.getElementById('fingerCount');
+        const statusEl = document.getElementById('status');
+        const haStatusEl = document.getElementById('haStatus');
+        const cooldownTimerEl = document.getElementById('cooldownTimer');
+        const placeholderIcon = document.getElementById('placeholderIcon');
+        const detectionHint = document.getElementById('detectionHint');
+        
+        // WebSocket connection to backend
+        const socket = io(window.location.origin, {
+            transports: ['websocket', 'polling'],
+            reconnection: true,
+            reconnectionAttempts: 10,
+            reconnectionDelay: 1000
+        });
+        
+        // UI Update State
+        let lastCooldownRemaining = 0;
+        
+        // Handle connection events
+        socket.on('connect', () => {
+            console.log('✅ Connected to backend WebSocket');
+            statusEl.textContent = '✅ Connected to backend';
+            statusEl.style.color = '#0f0';
+            detectionHint.textContent = 'Connected - Waiting for hand...';
+        });
+        
+        socket.on('disconnect', () => {
+            console.log('❌ Disconnected from backend');
+            statusEl.textContent = '❌ Backend disconnected';
+            statusEl.style.color = '#f00';
+            detectionHint.textContent = 'Reconnecting to backend...';
+        });
+        
+        socket.on('connect_error', (error) => {
+            console.error('Connection error:', error);
+            statusEl.textContent = '⚠️ Backend connection error';
+            statusEl.style.color = '#ffaa00';
+            detectionHint.textContent = 'Connection error - retrying...';
+        });
+        
+        // Receive gesture updates from backend
+        socket.on('gesture_update', (data) => {
+            // Update gesture display
+            gestureIconEl.textContent = data.gestureIcon || '🤚';
+            gestureNameEl.textContent = data.gestureName || 'No Hand';
+            fingerCountEl.textContent = `Fingers: ${data.fingerCount || 0}`;
+            
+            // Update placeholder/large icon for visual feedback
+            if (data.status === 'detecting') {
+                placeholderIcon.textContent = data.gestureIcon || '✋';
+                detectionHint.textContent = `Detected: ${data.gestureName}`;
+                detectionHint.style.color = '#0f0';
+                placeholderIcon.style.animation = 'pulse 0.5s ease';
+                setTimeout(() => {
+                    placeholderIcon.style.animation = '';
+                }, 500);
+            } else if (data.status === 'no_hand') {
+                placeholderIcon.textContent = '🤚';
+                if (data.personDetected === false) {
+                    detectionHint.textContent = 'No person detected by Frigate';
+                    detectionHint.style.color = '#ffaa00';
+                } else {
+                    detectionHint.textContent = 'No hand detected - show your hand to camera';
+                    detectionHint.style.color = 'rgba(255,255,255,0.5)';
+                }
+            }
+            
+            // Update status text
+            if (data.status === 'detecting') {
+                statusEl.textContent = '🎥 Detecting gestures';
+                statusEl.style.color = '#0f0';
+            } else if (data.status === 'no_hand') {
+                if (data.personDetected === false) {
+                    statusEl.textContent = '🚶 Waiting for person...';
+                    statusEl.style.color = '#ffaa00';
+                } else {
+                    statusEl.textContent = '👋 No hand detected';
+                    statusEl.style.color = '#ffaa00';
+                }
+            }
+            
+            // Update cooldown timer
+            if (data.cooldownRemaining > 0) {
+                cooldownTimerEl.textContent = `⏱️ Cooldown: ${data.cooldownRemaining.toFixed(1)}s`;
+                cooldownTimerEl.style.color = '#ffaa00';
+            } else {
+                cooldownTimerEl.textContent = '⚡ Cooldown: Ready';
+                cooldownTimerEl.style.color = '#0f0';
+            }
+            
+            // Show last action briefly
+            if (data.lastAction && data.lastAction !== '') {
+                haStatusEl.textContent = `⚡ ${data.lastAction}`;
+                haStatusEl.style.color = '#0f0';
+                setTimeout(() => {
+                    if (socket.connected) {
+                        haStatusEl.textContent = 'HA: Connected ✓';
+                        haStatusEl.style.color = '#0f0';
+                    }
+                }, 1500);
+            }
+        });
+        
+        // Health check / reconnect indicator
+        let reconnectAttempt = 0;
+        socket.on('reconnect_attempt', (attempt) => {
+            reconnectAttempt = attempt;
+            statusEl.textContent = `🔄 Reconnecting... (${attempt})`;
+            statusEl.style.color = '#ffaa00';
+        });
+        
+        socket.on('reconnect', () => {
+            statusEl.textContent = '✅ Reconnected to backend';
+            statusEl.style.color = '#0f0';
+            setTimeout(() => {
+                if (statusEl.textContent === '✅ Reconnected to backend') {
+                    statusEl.textContent = '🎥 Connected';
+                }
+            }, 2000);
+        });
+        
+        // Initial HA status
+        haStatusEl.textContent = 'HA: Connected ✓';
+        haStatusEl.style.color = '#0f0';
+        
+        // Animation for gesture icon changes
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                if (mutation.attributeName === 'textContent' || mutation.type === 'characterData') {
+                    gestureIconEl.style.transform = 'scale(1.1)';
+                    setTimeout(() => {
+                        gestureIconEl.style.transform = 'scale(1)';
+                    }, 150);
+                }
+            });
+        });
+        
+        observer.observe(gestureIconEl, { childList: true, subtree: true, characterData: true });
+        
+        console.log('Frontend UI ready - waiting for backend connection');
+    </script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+{
+  "name": "Gesture Control",
+  "version": "1.0.0",
+  "slug": "gesture_control",
+  "description": "Control Home Assistant lights with hand gestures via RTSP camera",
+  "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
+  "startup": "application",
+  "boot": "auto",
+  "host_network": true,
+  "options": {
+    "rtsp_url": "",
+    "strip_light_entity": "light.strip_light",
+    "row_3_entity": "light.row_3",
+    "cooldown_seconds": 2,
+    "detection_confidence": 0.5,
+    "tracking_confidence": 0.5,
+    "frigate_enabled": false,
+    "frigate_url": "http://homeassistant.local:5005",
+    "frigate_camera": ""
+  },
+  "schema": {
+    "rtsp_url": "str",
+    "strip_light_entity": "str",
+    "row_3_entity": "str",
+    "cooldown_seconds": "int(1,10)",
+    "detection_confidence": "float(0.3,0.9)",
+    "tracking_confidence": "float(0.3,0.9)",
+    "frigate_enabled": "bool",
+    "frigate_url": "str",
+    "frigate_camera": "str"
+  },
+  "panel_icon": "mdi:hand-wave",
+  "homeassistant_api": true,
+  "ingress": false,
+  "panel_ingress": false,
+  "ports": {
+    "8099/tcp": 8099
+  },
+  "ports_description": {
+    "8099/tcp": "Web UI and WebSocket port"
+  },
+  "webui": "http://[HOST]:[PORT:8099]"
+}
