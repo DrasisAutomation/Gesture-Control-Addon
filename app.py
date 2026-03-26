@@ -3,8 +3,7 @@
 Gesture Control Add-on for Home Assistant
 - RTSP camera stream processing with MediaPipe Hands
 - WebSocket server for frontend UI updates
-- Home Assistant API integration via Supervisor
-- ACCURATE finger counting (same logic as test.html)
+- ACCURATE finger counting with proper MediaPipe landmark handling
 """
 
 import asyncio
@@ -17,11 +16,9 @@ import logging
 import threading
 import os
 import sys
-import base64
 from aiohttp import web
 import socketio
 import httpx
-from collections import deque
 
 # Configure logging
 logging.basicConfig(
@@ -30,14 +27,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Configuration (load from add-on options)
+# Configuration
 RTSP_URL = ""
 STRIP_LIGHT_ENTITY = "light.strip_light"
 ROW_3_ENTITY = "light.row_3"
 COOLDOWN_SECONDS = 2
 DETECTION_CONFIDENCE = 0.5
 TRACKING_CONFIDENCE = 0.5
-FRAME_SKIP = 2  # Process every 2nd frame for performance
 
 # Try to load config from add-on options
 try:
@@ -69,21 +65,21 @@ current_gesture_name = "No Hand"
 current_gesture_icon = "🤚"
 last_action = ""
 detection_status = "no_hand"
-person_detected = True  # For Frigate integration if needed
+camera_active = False
 
-# WebSocket server for frontend
+# WebSocket server
 sio = socketio.AsyncServer(cors_allowed_origins='*', async_mode='aiohttp')
 app = web.Application()
 sio.attach(app)
 
 # ============================================================================
-# ACCURATE FINGER COUNTING - EXACT SAME LOGIC AS TEST.HTML
+# ACCURATE FINGER COUNTING
 # ============================================================================
 
 def count_extended_fingers(landmarks):
     """
-    Count extended fingers - EXACT logic from working test.html
-    This matches the JavaScript version perfectly for consistency
+    Count extended fingers from MediaPipe landmarks
+    landmarks is a list of NormalizedLandmark objects
     """
     if not landmarks or len(landmarks) < 21:
         return 0
@@ -107,14 +103,11 @@ def count_extended_fingers(landmarks):
         count += 1
     
     # Thumb (horizontal position based on hand orientation)
-    # Determine if it's right hand by comparing wrist points
     is_right_hand = landmarks[5].x < landmarks[17].x
     if is_right_hand:
-        # Right hand: thumb extended if tip is to the left of IP joint
         if landmarks[4].x < landmarks[3].x - 0.02:
             count += 1
     else:
-        # Left hand: thumb extended if tip is to the right of IP joint
         if landmarks[4].x > landmarks[3].x + 0.02:
             count += 1
     
@@ -122,7 +115,7 @@ def count_extended_fingers(landmarks):
 
 
 def get_gesture_info(finger_count):
-    """Get gesture info based on finger count - matching test.html"""
+    """Get gesture info based on finger count"""
     if finger_count == 0:
         return {'name': 'Fist', 'icon': '✊'}
     elif finger_count == 2:
@@ -134,58 +127,6 @@ def get_gesture_info(finger_count):
     else:
         plural = '' if finger_count == 1 else 's'
         return {'name': f'{finger_count} Finger{plural}', 'icon': '🖐️'}
-
-
-def draw_hand_annotations(frame, landmarks, finger_count):
-    """
-    Draw hand landmarks and skeleton on frame for debugging
-    Returns annotated frame
-    """
-    if not landmarks:
-        return frame
-    
-    h, w = frame.shape[:2]
-    
-    # Draw connections
-    connections = [
-        [0, 1], [1, 2], [2, 3], [3, 4],  # Thumb
-        [0, 5], [5, 6], [6, 7], [7, 8],  # Index
-        [0, 9], [9, 10], [10, 11], [11, 12],  # Middle
-        [0, 13], [13, 14], [14, 15], [15, 16],  # Ring
-        [0, 17], [17, 18], [18, 19], [19, 20],  # Pinky
-        [5, 9], [9, 13], [13, 17]  # Palm
-    ]
-    
-    for conn in connections:
-        p1 = landmarks[conn[0]]
-        p2 = landmarks[conn[1]]
-        pt1 = (int(p1.x * w), int(p1.y * h))
-        pt2 = (int(p2.x * w), int(p2.y * h))
-        cv2.line(frame, pt1, pt2, (0, 255, 0), 2)
-    
-    # Draw landmarks
-    for i, lm in enumerate(landmarks):
-        x = int(lm.x * w)
-        y = int(lm.y * h)
-        is_tip = i in [4, 8, 12, 16, 20]
-        color = (0, 255, 255) if is_tip else (0, 0, 255)
-        radius = 6 if is_tip else 4
-        cv2.circle(frame, (x, y), radius, color, -1)
-    
-    # Draw finger count text
-    cv2.putText(frame, f"Fingers: {finger_count}", (10, 50),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-    
-    # Draw cooldown if active
-    global last_trigger_time, COOLDOWN_SECONDS
-    if last_trigger_time:
-        elapsed = time.time() - last_trigger_time
-        if elapsed < COOLDOWN_SECONDS:
-            remaining = COOLDOWN_SECONDS - elapsed
-            cv2.putText(frame, f"Cooldown: {remaining:.1f}s", (10, 90),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
-    
-    return frame
 
 
 # ============================================================================
@@ -225,7 +166,7 @@ async def trigger_action(finger_count):
     
     now = time.time()
     
-    # Cooldown check - prevent repeated triggers of same gesture
+    # Cooldown check
     if last_gesture == finger_count and (now - last_trigger_time) < COOLDOWN_SECONDS:
         return None
     
@@ -233,12 +174,11 @@ async def trigger_action(finger_count):
     entity = None
     service = None
     
-    # Map finger count to actions (same as test.html)
     if finger_count == 0:  # Fist
         action = "turn_on"
         entity = STRIP_LIGHT_ENTITY
         service = "turn_on"
-    elif finger_count == 2:  # Peace sign / 2 fingers
+    elif finger_count == 2:  # Peace sign
         action = "turn_on"
         entity = ROW_3_ENTITY
         service = "turn_on"
@@ -265,27 +205,26 @@ async def trigger_action(finger_count):
 
 
 # ============================================================================
-# RTSP Camera Processing Thread with Accurate Detection
+# RTSP Camera Processing Thread
 # ============================================================================
 
 def camera_processor():
-    """Background thread for RTSP camera processing with accurate hand detection"""
-    global current_finger_count, current_gesture_name, current_gesture_icon, detection_status
+    """Background thread for RTSP camera processing"""
+    global current_finger_count, current_gesture_name, current_gesture_icon, detection_status, camera_active
     
     if not RTSP_URL:
         logger.error("❌ No RTSP URL configured, camera processor stopped")
         return
     
     logger.info(f"📹 Starting camera processor with MediaPipe Hands")
-    logger.info(f"   Detection confidence: {DETECTION_CONFIDENCE}")
-    logger.info(f"   Tracking confidence: {TRACKING_CONFIDENCE}")
+    logger.info(f"   RTSP URL: {RTSP_URL[:80]}...")
     
     # Initialize MediaPipe Hands
     mp_hands = mp.solutions.hands
     hands = mp_hands.Hands(
         static_image_mode=False,
         max_num_hands=1,
-        model_complexity=1,  # Use complexity 1 for balance of speed/accuracy
+        model_complexity=1,
         min_detection_confidence=DETECTION_CONFIDENCE,
         min_tracking_confidence=TRACKING_CONFIDENCE
     )
@@ -294,6 +233,7 @@ def camera_processor():
     reconnect_delay = 1
     max_reconnect_delay = 30
     frame_counter = 0
+    last_landmarks = None
     
     while True:
         try:
@@ -301,12 +241,12 @@ def camera_processor():
                 logger.info(f"🔌 Connecting to RTSP stream...")
                 cap = cv2.VideoCapture(RTSP_URL)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                cap.set(cv2.CAP_PROP_FPS, 30)
                 
                 if not cap.isOpened():
                     raise Exception("Failed to open RTSP stream")
                 
                 logger.info("✅ RTSP stream connected successfully")
+                camera_active = True
                 reconnect_delay = 1
                 frame_counter = 0
             
@@ -316,59 +256,59 @@ def camera_processor():
             
             frame_counter += 1
             
-            # Process every Nth frame for performance
-            if frame_counter % FRAME_SKIP == 0:
-                # Flip horizontally for mirror effect (like test.html)
-                frame = cv2.flip(frame, 1)
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # Process every frame for better detection
+            # Flip horizontally for mirror effect
+            frame = cv2.flip(frame, 1)
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            
+            # Process with MediaPipe
+            results = hands.process(rgb_frame)
+            
+            if results.multi_hand_landmarks:
+                detection_status = "detecting"
+                # Convert landmarks to a list for easy access
+                landmarks = results.multi_hand_landmarks[0]
+                last_landmarks = landmarks
                 
-                # Process with MediaPipe
-                results = hands.process(rgb_frame)
+                # Count fingers
+                finger_count = count_extended_fingers(landmarks)
+                gesture = get_gesture_info(finger_count)
                 
-                if results.multi_hand_landmarks:
-                    detection_status = "detecting"
-                    landmarks = results.multi_hand_landmarks[0]
-                    
-                    # ACCURATE finger counting using exact same logic
-                    finger_count = count_extended_fingers(landmarks)
-                    gesture = get_gesture_info(finger_count)
-                    
-                    # Update global state
-                    if current_finger_count != finger_count:
-                        logger.debug(f"Gesture changed: {finger_count} fingers ({gesture['name']})")
-                    
-                    current_finger_count = finger_count
-                    current_gesture_name = gesture['name']
-                    current_gesture_icon = gesture['icon']
-                    
-                    # Draw annotations for debugging (optional, can be disabled)
-                    # annotated = draw_hand_annotations(frame, landmarks, finger_count)
-                    
-                    # Trigger HA action (run in event loop)
-                    try:
-                        loop = asyncio.get_running_loop()
-                    except RuntimeError:
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                    
-                    asyncio.run_coroutine_threadsafe(
-                        trigger_action(finger_count), 
-                        loop if loop.is_running() else asyncio.get_event_loop()
-                    )
-                else:
-                    # No hand detected
-                    if detection_status != "no_hand":
-                        logger.debug("No hand detected")
-                    detection_status = "no_hand"
-                    current_finger_count = 0
-                    current_gesture_name = "No Hand"
-                    current_gesture_icon = "🤚"
+                # Update global state
+                if current_finger_count != finger_count:
+                    logger.debug(f"Gesture: {finger_count} fingers ({gesture['name']})")
+                
+                current_finger_count = finger_count
+                current_gesture_name = gesture['name']
+                current_gesture_icon = gesture['icon']
+                
+                # Trigger HA action (run in async context)
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                asyncio.run_coroutine_threadsafe(
+                    trigger_action(finger_count), 
+                    loop
+                )
+            else:
+                # No hand detected
+                if detection_status != "no_hand":
+                    logger.debug("No hand detected")
+                detection_status = "no_hand"
+                current_finger_count = 0
+                current_gesture_name = "No Hand"
+                current_gesture_icon = "🤚"
+                last_landmarks = None
             
             # Reset reconnect delay on successful frame
             reconnect_delay = 1
             
         except Exception as e:
             logger.error(f"❌ Camera error: {e}")
+            camera_active = False
             if cap:
                 cap.release()
                 cap = None
@@ -380,11 +320,11 @@ def camera_processor():
             current_gesture_icon = "🤚"
         
         # Small sleep to prevent CPU hogging
-        time.sleep(0.03)
+        time.sleep(0.01)
 
 
 # ============================================================================
-# WebSocket Events for Frontend
+# WebSocket Events
 # ============================================================================
 
 @sio.on('connect')
@@ -396,7 +336,7 @@ async def connect(sid, environ):
         'gestureIcon': current_gesture_icon,
         'lastAction': last_action,
         'status': detection_status,
-        'personDetected': person_detected,
+        'cameraActive': camera_active,
         'cooldownRemaining': max(0, COOLDOWN_SECONDS - (time.time() - last_trigger_time)) if last_trigger_time else 0
     }, room=sid)
 
@@ -419,7 +359,7 @@ async def broadcast_gesture_state():
         'gestureIcon': current_gesture_icon,
         'lastAction': last_action,
         'status': detection_status,
-        'personDetected': person_detected,
+        'cameraActive': camera_active,
         'cooldownRemaining': cooldown_remaining
     })
 
@@ -446,8 +386,8 @@ async def index_handler(request):
                 break
         
         if html_content is None:
-            logger.error("❌ index.html not found")
-            return web.Response(text="Error: UI files not found", status=500)
+            # Serve embedded HTML if file not found
+            html_content = get_embedded_html()
         
         return web.Response(text=html_content, content_type='text/html')
     except Exception as e:
@@ -455,11 +395,34 @@ async def index_handler(request):
         return web.Response(text=f"Error: {str(e)}", status=500)
 
 
+def get_embedded_html():
+    """Return embedded HTML if file not found"""
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gesture Control - Loading</title>
+    <style>
+        body { background: #000; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: monospace; }
+        .error { text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="error">
+        <h2>⚠️ UI File Not Found</h2>
+        <p>Please ensure index.html is in /app/web/ directory</p>
+    </div>
+</body>
+</html>"""
+
+
 async def health_handler(request):
     """Health check endpoint"""
     return web.json_response({
         'status': 'running',
         'rtsp_configured': bool(RTSP_URL),
+        'camera_active': camera_active,
         'gesture': current_gesture_name,
         'finger_count': current_finger_count,
         'detection_status': detection_status,
@@ -476,7 +439,7 @@ async def health_handler(request):
 
 @web.middleware
 async def cors_middleware(request, handler):
-    """Add CORS headers to all responses"""
+    """Add CORS headers"""
     if request.method == 'OPTIONS':
         return web.Response(headers={
             'Access-Control-Allow-Origin': '*',
@@ -490,17 +453,17 @@ async def cors_middleware(request, handler):
 
 
 # ============================================================================
-# Background Task for Broadcasting
+# Background Task
 # ============================================================================
 
 async def broadcast_task():
-    """Periodically broadcast gesture state to frontend"""
+    """Periodically broadcast gesture state"""
     while True:
         try:
             await broadcast_gesture_state()
         except Exception as e:
             logger.error(f"Broadcast error: {e}")
-        await asyncio.sleep(0.1)  # 10Hz updates
+        await asyncio.sleep(0.1)
 
 
 # ============================================================================
@@ -527,7 +490,6 @@ async def main():
         logger.info("✅ Camera processing thread started")
     else:
         logger.warning("⚠️  No RTSP URL configured. Camera processing disabled.")
-        logger.warning("   Please configure rtsp_url in add-on options and restart.")
     
     # Start broadcast task
     asyncio.create_task(broadcast_task())
