@@ -14,11 +14,8 @@ import time
 import json
 import logging
 import threading
-import queue
 import os
-import signal
 import sys
-from datetime import datetime
 import httpx
 import socketio
 from aiohttp import web
@@ -32,30 +29,34 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Global variables
-RTSP_URL = os.environ.get('RTSP_URL', '')
-STRIP_LIGHT_ENTITY = os.environ.get('STRIP_LIGHT_ENTITY', 'light.strip_light')
-ROW_3_ENTITY = os.environ.get('ROW_3_ENTITY', 'light.row_3')
-COOLDOWN_SECONDS = int(os.environ.get('COOLDOWN_SECONDS', 2))
-DETECTION_CONFIDENCE = float(os.environ.get('DETECTION_CONFIDENCE', 0.5))
-TRACKING_CONFIDENCE = float(os.environ.get('TRACKING_CONFIDENCE', 0.5))
+RTSP_URL = ""
+STRIP_LIGHT_ENTITY = "light.strip_light"
+ROW_3_ENTITY = "light.row_3"
+COOLDOWN_SECONDS = 2
+DETECTION_CONFIDENCE = 0.5
+TRACKING_CONFIDENCE = 0.5
 
 # Try to load config from add-on options
 try:
-    with open('/data/options.json', 'r') as f:
-        config = json.load(f)
-        RTSP_URL = config.get('rtsp_url', RTSP_URL)
-        STRIP_LIGHT_ENTITY = config.get('strip_light_entity', STRIP_LIGHT_ENTITY)
-        ROW_3_ENTITY = config.get('row_3_entity', ROW_3_ENTITY)
-        COOLDOWN_SECONDS = config.get('cooldown_seconds', COOLDOWN_SECONDS)
-        DETECTION_CONFIDENCE = config.get('detection_confidence', DETECTION_CONFIDENCE)
-        TRACKING_CONFIDENCE = config.get('tracking_confidence', TRACKING_CONFIDENCE)
-        logger.info(f"Loaded config from /data/options.json")
-except FileNotFoundError:
-    logger.warning("No /data/options.json found, using environment variables")
-
-if not RTSP_URL:
-    logger.error("RTSP_URL not configured! Please set in add-on options.")
-    # Don't exit, let it run with error state
+    config_path = "/data/options.json"
+    if os.path.exists(config_path):
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+            RTSP_URL = config.get('rtsp_url', '')
+            STRIP_LIGHT_ENTITY = config.get('strip_light_entity', STRIP_LIGHT_ENTITY)
+            ROW_3_ENTITY = config.get('row_3_entity', ROW_3_ENTITY)
+            COOLDOWN_SECONDS = config.get('cooldown_seconds', COOLDOWN_SECONDS)
+            DETECTION_CONFIDENCE = config.get('detection_confidence', DETECTION_CONFIDENCE)
+            TRACKING_CONFIDENCE = config.get('tracking_confidence', TRACKING_CONFIDENCE)
+            logger.info(f"✅ Loaded config from /data/options.json")
+            logger.info(f"   RTSP URL: {RTSP_URL[:50] if RTSP_URL else 'NOT SET'}...")
+            logger.info(f"   Strip Light: {STRIP_LIGHT_ENTITY}")
+            logger.info(f"   Row 3: {ROW_3_ENTITY}")
+            logger.info(f"   Cooldown: {COOLDOWN_SECONDS}s")
+    else:
+        logger.warning(f"Config file not found: {config_path}")
+except Exception as e:
+    logger.error(f"Error loading config: {e}")
 
 SUPERVISOR_TOKEN = os.environ.get('SUPERVISOR_TOKEN', '')
 SUPERVISOR_API = "http://supervisor/core"
@@ -68,9 +69,6 @@ current_gesture_name = "No Hand"
 current_gesture_icon = "🤚"
 last_action = ""
 detection_status = "no_hand"
-
-# Thread-safe queue for frame processing
-frame_queue = queue.Queue(maxsize=2)
 
 # WebSocket server for frontend
 sio = socketio.AsyncServer(cors_allowed_origins='*')
@@ -199,6 +197,7 @@ async def trigger_action(finger_count):
     if action and entity:
         last_action = f"{action.split('_')[1].upper()} {entity.split('.')[1]}"
         await call_ha_service(service, entity)
+        logger.info(f"🎯 Action triggered: {last_action}")
         return {"action": action, "entity": entity}
     
     return None
@@ -213,8 +212,10 @@ def camera_processor():
     global current_finger_count, current_gesture_name, current_gesture_icon, detection_status
     
     if not RTSP_URL:
-        logger.error("No RTSP URL configured, camera processor stopped")
+        logger.error("❌ No RTSP URL configured, camera processor stopped")
         return
+    
+    logger.info(f"📹 Starting camera processor with URL: {RTSP_URL[:50]}...")
     
     mp_hands = mp.solutions.hands
     hands = mp_hands.Hands(
@@ -228,27 +229,27 @@ def camera_processor():
     cap = None
     reconnect_delay = 1
     max_reconnect_delay = 30
-    frame_skip = 0
+    frame_count = 0
     
     while True:
         try:
             if cap is None or not cap.isOpened():
-                logger.info(f"Connecting to RTSP: {RTSP_URL[:50]}...")
+                logger.info(f"🔌 Connecting to RTSP stream...")
                 cap = cv2.VideoCapture(RTSP_URL)
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer for lower latency
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 if not cap.isOpened():
                     raise Exception("Failed to open RTSP stream")
+                logger.info("✅ RTSP stream connected successfully")
                 reconnect_delay = 1
-                logger.info("RTSP stream connected")
             
             ret, frame = cap.read()
             if not ret:
                 raise Exception("Failed to read frame")
             
-            # Process every 2nd frame to reduce CPU usage
-            frame_skip = (frame_skip + 1) % 2
-            if frame_skip == 0:
-                # Flip horizontally for mirror effect (like original)
+            frame_count += 1
+            # Process every 3rd frame to reduce CPU usage
+            if frame_count % 3 == 0:
+                # Flip horizontally for mirror effect
                 frame = cv2.flip(frame, 1)
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 
@@ -258,20 +259,27 @@ def camera_processor():
                     detection_status = "detecting"
                     landmarks = results.multi_hand_landmarks[0]
                     
-                    # Count fingers using exact logic
                     finger_count = count_extended_fingers(landmarks)
                     gesture = get_gesture_info(finger_count)
+                    
+                    if current_finger_count != finger_count:
+                        logger.debug(f"Gesture changed: {finger_count} fingers ({gesture['name']})")
                     
                     current_finger_count = finger_count
                     current_gesture_name = gesture['name']
                     current_gesture_icon = gesture['icon']
                     
-                    # Trigger HA action (async, but called from thread)
-                    loop = asyncio.get_event_loop()
-                    asyncio.run_coroutine_threadsafe(
-                        trigger_action(finger_count), loop
-                    )
+                    # Trigger HA action
+                    try:
+                        loop = asyncio.get_event_loop()
+                        asyncio.run_coroutine_threadsafe(
+                            trigger_action(finger_count), loop
+                        )
+                    except Exception as e:
+                        logger.error(f"Error triggering action: {e}")
                 else:
+                    if detection_status != "no_hand":
+                        logger.debug("No hand detected")
                     detection_status = "no_hand"
                     current_finger_count = 0
                     current_gesture_name = "No Hand"
@@ -281,7 +289,7 @@ def camera_processor():
             reconnect_delay = 1
             
         except Exception as e:
-            logger.error(f"Camera error: {e}")
+            logger.error(f"❌ Camera error: {e}")
             if cap:
                 cap.release()
                 cap = None
@@ -293,7 +301,7 @@ def camera_processor():
             current_gesture_icon = "🤚"
         
         # Small sleep to prevent CPU hogging
-        time.sleep(0.033)  # ~30fps
+        time.sleep(0.05)
 
 
 # -------------------------------------------------------------------------
@@ -302,7 +310,7 @@ def camera_processor():
 
 @sio.on('connect')
 async def connect(sid, environ):
-    logger.info(f"Frontend connected: {sid}")
+    logger.info(f"🟢 Frontend connected: {sid}")
     await sio.emit('gesture_update', {
         'fingerCount': current_finger_count,
         'gestureName': current_gesture_name,
@@ -311,6 +319,11 @@ async def connect(sid, environ):
         'status': detection_status,
         'cooldownRemaining': max(0, COOLDOWN_SECONDS - (time.time() - last_trigger_time)) if last_trigger_time else 0
     }, room=sid)
+
+
+@sio.on('disconnect')
+async def disconnect(sid):
+    logger.info(f"🔴 Frontend disconnected: {sid}")
 
 
 async def broadcast_gesture_state():
@@ -337,12 +350,28 @@ async def broadcast_gesture_state():
 async def index_handler(request):
     """Serve the frontend UI"""
     try:
-        with open('/app/web/index.html', 'r') as f:
-            content = f.read()
-        return web.Response(text=content, content_type='text/html')
+        # Try multiple possible paths
+        possible_paths = [
+            '/app/web/index.html',
+            './web/index.html',
+        ]
+        
+        html_content = None
+        for path in possible_paths:
+            if os.path.exists(path):
+                logger.info(f"📄 Found index.html at {path}")
+                with open(path, 'r') as f:
+                    html_content = f.read()
+                break
+        
+        if html_content is None:
+            logger.error("❌ index.html not found in any location")
+            return web.Response(text="Error: UI files not found", status=500)
+        
+        return web.Response(text=html_content, content_type='text/html')
     except Exception as e:
         logger.error(f"Error serving index: {e}")
-        return web.Response(text="Error loading UI", status=500)
+        return web.Response(text=f"Error loading UI: {str(e)}", status=500)
 
 
 async def health_handler(request):
@@ -350,10 +379,19 @@ async def health_handler(request):
     return web.json_response({
         'status': 'running',
         'rtsp_configured': bool(RTSP_URL),
+        'rtsp_url': RTSP_URL[:50] if RTSP_URL else '',
         'gesture': current_gesture_name,
         'finger_count': current_finger_count,
-        'detection_status': detection_status
+        'detection_status': detection_status,
+        'strip_light_entity': STRIP_LIGHT_ENTITY,
+        'row_3_entity': ROW_3_ENTITY,
+        'cooldown_seconds': COOLDOWN_SECONDS
     })
+
+
+async def test_handler(request):
+    """Test endpoint"""
+    return web.Response(text="✅ Gesture Control Add-on is running!")
 
 
 # -------------------------------------------------------------------------
@@ -363,8 +401,11 @@ async def health_handler(request):
 async def broadcast_task():
     """Periodically broadcast gesture state to frontend"""
     while True:
-        await broadcast_gesture_state()
-        await asyncio.sleep(0.1)  # 10fps updates
+        try:
+            await broadcast_gesture_state()
+        except Exception as e:
+            logger.error(f"Broadcast error: {e}")
+        await asyncio.sleep(0.1)
 
 
 # -------------------------------------------------------------------------
@@ -373,13 +414,25 @@ async def broadcast_task():
 
 async def main():
     """Main async entry point"""
+    logger.info("=" * 50)
+    logger.info("🎮 Starting Gesture Control Add-on")
+    logger.info("=" * 50)
+    logger.info(f"📹 RTSP URL: {'✅ Configured' if RTSP_URL else '❌ NOT CONFIGURED'}")
+    logger.info(f"💡 Strip Light: {STRIP_LIGHT_ENTITY}")
+    logger.info(f"💡 Row 3 Light: {ROW_3_ENTITY}")
+    logger.info(f"⏱️  Cooldown: {COOLDOWN_SECONDS}s")
+    logger.info(f"🎯 Detection Confidence: {DETECTION_CONFIDENCE}")
+    logger.info(f"🎯 Tracking Confidence: {TRACKING_CONFIDENCE}")
+    logger.info("=" * 50)
+    
     # Start camera processing thread if RTSP is configured
     if RTSP_URL:
         camera_thread = threading.Thread(target=camera_processor, daemon=True)
         camera_thread.start()
-        logger.info("Camera processing thread started")
+        logger.info("✅ Camera processing thread started")
     else:
-        logger.warning("No RTSP URL configured. Camera processing disabled. Set rtsp_url in add-on options.")
+        logger.warning("⚠️  No RTSP URL configured. Camera processing disabled.")
+        logger.warning("   Please configure rtsp_url in add-on options and restart.")
     
     # Start broadcast task
     asyncio.create_task(broadcast_task())
@@ -387,6 +440,7 @@ async def main():
     # Setup HTTP routes
     app.router.add_get('/', index_handler)
     app.router.add_get('/health', health_handler)
+    app.router.add_get('/test', test_handler)
     
     # Setup CORS
     cors = aiohttp_cors.setup(app, defaults={
@@ -405,7 +459,12 @@ async def main():
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', 8099)
     await site.start()
-    logger.info("Web server started on port 8099")
+    logger.info("=" * 50)
+    logger.info("🌐 Web server started on port 8099")
+    logger.info(f"📍 Access the UI at: http://[YOUR-IP]:8099/")
+    logger.info(f"🔍 Health check: http://[YOUR-IP]:8099/health")
+    logger.info(f"🧪 Test endpoint: http://[YOUR-IP]:8099/test")
+    logger.info("=" * 50)
     
     # Keep running
     await asyncio.Event().wait()
