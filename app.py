@@ -73,18 +73,23 @@ app = web.Application()
 sio.attach(app)
 
 # ============================================================================
-# ACCURATE FINGER COUNTING
+# ACCURATE FINGER COUNTING - FIXED
 # ============================================================================
 
-def count_extended_fingers(landmarks):
+def count_extended_fingers(hand_landmarks):
     """
     Count extended fingers from MediaPipe landmarks
-    landmarks is a list of NormalizedLandmark objects
+    hand_landmarks is a NormalizedLandmarkList object
     """
-    if not landmarks or len(landmarks) < 21:
+    if not hand_landmarks:
         return 0
     
     count = 0
+    
+    # Convert to list for easier access
+    landmarks = []
+    for i in range(21):  # MediaPipe has 21 landmarks
+        landmarks.append(hand_landmarks.landmark[i])
     
     # Index finger (tip 8 vs pip 6)
     if landmarks[8].y < landmarks[6].y - 0.03:
@@ -103,11 +108,14 @@ def count_extended_fingers(landmarks):
         count += 1
     
     # Thumb (horizontal position based on hand orientation)
+    # Check if hand is right or left based on wrist and thumb positions
     is_right_hand = landmarks[5].x < landmarks[17].x
     if is_right_hand:
+        # Right hand: thumb tip should be to the left of thumb IP
         if landmarks[4].x < landmarks[3].x - 0.02:
             count += 1
     else:
+        # Left hand: thumb tip should be to the right of thumb IP
         if landmarks[4].x > landmarks[3].x + 0.02:
             count += 1
     
@@ -118,15 +126,18 @@ def get_gesture_info(finger_count):
     """Get gesture info based on finger count"""
     if finger_count == 0:
         return {'name': 'Fist', 'icon': '✊'}
+    elif finger_count == 1:
+        return {'name': '1 Finger', 'icon': '☝️'}
     elif finger_count == 2:
-        return {'name': '2 Fingers', 'icon': '✌️'}
+        return {'name': 'Peace', 'icon': '✌️'}
     elif finger_count == 3:
-        return {'name': '3 Fingers', 'icon': '👌'}
+        return {'name': 'Three', 'icon': '👌'}
+    elif finger_count == 4:
+        return {'name': 'Four', 'icon': '🖖'}
     elif finger_count == 5:
         return {'name': 'Palm', 'icon': '✋'}
     else:
-        plural = '' if finger_count == 1 else 's'
-        return {'name': f'{finger_count} Finger{plural}', 'icon': '🖐️'}
+        return {'name': f'{finger_count} Fingers', 'icon': '🖐️'}
 
 
 # ============================================================================
@@ -173,39 +184,44 @@ async def trigger_action(finger_count):
     action = None
     entity = None
     service = None
+    action_description = None
     
     if finger_count == 0:  # Fist
         action = "turn_on"
         entity = STRIP_LIGHT_ENTITY
         service = "turn_on"
+        action_description = "ON Strip Light"
     elif finger_count == 2:  # Peace sign
         action = "turn_on"
         entity = ROW_3_ENTITY
         service = "turn_on"
+        action_description = "ON Row 3"
     elif finger_count == 3:  # Three fingers
         action = "turn_off"
         entity = ROW_3_ENTITY
         service = "turn_off"
+        action_description = "OFF Row 3"
     elif finger_count == 5:  # Open palm
         action = "turn_off"
         entity = STRIP_LIGHT_ENTITY
         service = "turn_off"
+        action_description = "OFF Strip Light"
     
     if action and entity:
         last_gesture = finger_count
         last_trigger_time = now
-        last_action = f"{action.split('_')[1].upper()} {entity.split('.')[1]}"
+        last_action = action_description
         
         success = await call_ha_service(service, entity)
         if success:
             logger.info(f"🎯 Action triggered: {last_action}")
-            return {"action": action, "entity": entity}
+            return {"action": action, "entity": entity, "description": action_description}
     
     return None
 
 
 # ============================================================================
-# RTSP Camera Processing Thread
+# RTSP Camera Processing Thread - FIXED
 # ============================================================================
 
 def camera_processor():
@@ -232,8 +248,15 @@ def camera_processor():
     cap = None
     reconnect_delay = 1
     max_reconnect_delay = 30
-    frame_counter = 0
     last_landmarks = None
+    last_detection_time = 0
+    
+    # Get or create event loop for async operations
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
     
     while True:
         try:
@@ -248,15 +271,12 @@ def camera_processor():
                 logger.info("✅ RTSP stream connected successfully")
                 camera_active = True
                 reconnect_delay = 1
-                frame_counter = 0
             
             ret, frame = cap.read()
             if not ret:
                 raise Exception("Failed to read frame")
             
-            frame_counter += 1
-            
-            # Process every frame for better detection
+            # Process every frame
             # Flip horizontally for mirror effect
             frame = cv2.flip(frame, 1)
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -266,12 +286,13 @@ def camera_processor():
             
             if results.multi_hand_landmarks:
                 detection_status = "detecting"
-                # Convert landmarks to a list for easy access
-                landmarks = results.multi_hand_landmarks[0]
-                last_landmarks = landmarks
+                last_detection_time = time.time()
+                # Get the first hand
+                hand_landmarks = results.multi_hand_landmarks[0]
+                last_landmarks = hand_landmarks
                 
-                # Count fingers
-                finger_count = count_extended_fingers(landmarks)
+                # Count fingers - FIXED: pass the landmark object directly
+                finger_count = count_extended_fingers(hand_landmarks)
                 gesture = get_gesture_info(finger_count)
                 
                 # Update global state
@@ -282,26 +303,23 @@ def camera_processor():
                 current_gesture_name = gesture['name']
                 current_gesture_icon = gesture['icon']
                 
-                # Trigger HA action (run in async context)
-                try:
-                    loop = asyncio.get_event_loop()
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                
-                asyncio.run_coroutine_threadsafe(
+                # Trigger HA action
+                future = asyncio.run_coroutine_threadsafe(
                     trigger_action(finger_count), 
                     loop
                 )
+                # Optionally wait for result without blocking
+                future.add_done_callback(lambda f: None)
             else:
                 # No hand detected
-                if detection_status != "no_hand":
-                    logger.debug("No hand detected")
-                detection_status = "no_hand"
-                current_finger_count = 0
-                current_gesture_name = "No Hand"
-                current_gesture_icon = "🤚"
-                last_landmarks = None
+                if time.time() - last_detection_time > 0.5:
+                    if detection_status != "no_hand":
+                        logger.debug("No hand detected")
+                    detection_status = "no_hand"
+                    current_finger_count = 0
+                    current_gesture_name = "No Hand"
+                    current_gesture_icon = "🤚"
+                    last_landmarks = None
             
             # Reset reconnect delay on successful frame
             reconnect_delay = 1
@@ -330,6 +348,11 @@ def camera_processor():
 @sio.on('connect')
 async def connect(sid, environ):
     logger.info(f"🟢 Frontend connected: {sid}")
+    cooldown_remaining = 0
+    if last_trigger_time:
+        remaining = COOLDOWN_SECONDS - (time.time() - last_trigger_time)
+        cooldown_remaining = max(0, remaining)
+    
     await sio.emit('gesture_update', {
         'fingerCount': current_finger_count,
         'gestureName': current_gesture_name,
@@ -337,7 +360,7 @@ async def connect(sid, environ):
         'lastAction': last_action,
         'status': detection_status,
         'cameraActive': camera_active,
-        'cooldownRemaining': max(0, COOLDOWN_SECONDS - (time.time() - last_trigger_time)) if last_trigger_time else 0
+        'cooldownRemaining': cooldown_remaining
     }, room=sid)
 
 
