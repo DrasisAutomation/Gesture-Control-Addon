@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Gesture Control - Home Assistant Integration</title>
+    <title>Gesture Control Pro - Home Assistant</title>
     <style>
         * {
             margin: 0;
@@ -21,20 +21,28 @@
             position: relative;
             width: 100vw;
             height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
             background: #000;
         }
 
-        /* Camera feed */
-        .camera-feed {
+        video, canvas {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
             object-fit: cover;
+        }
+
+        canvas {
+            transform: scaleX(-1);
+        }
+
+        video {
             transform: scaleX(-1);
             filter: brightness(1.05);
-            z-index: 1;
         }
 
         /* Gesture display at bottom right corner */
@@ -55,18 +63,6 @@
             box-shadow: 0 4px 20px rgba(0,0,0,0.5);
             min-width: 180px;
             pointer-events: none;
-            animation: slideIn 0.3s ease;
-        }
-
-        @keyframes slideIn {
-            from {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-            to {
-                transform: translateX(0);
-                opacity: 1;
-            }
         }
 
         .current-gesture {
@@ -77,12 +73,6 @@
             font-size: 64px;
             filter: drop-shadow(0 2px 10px rgba(0,0,0,0.5));
             transition: transform 0.1s ease;
-            animation: bounce 0.3s ease;
-        }
-
-        @keyframes bounce {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.2); }
         }
 
         .gesture-name {
@@ -173,21 +163,14 @@
             pointer-events: none;
         }
 
-        .gesture-history {
-            position: fixed;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0,0,0,0.7);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            padding: 8px 15px;
-            font-size: 12px;
-            color: #0f0;
-            font-family: monospace;
-            z-index: 1000;
-            pointer-events: none;
-            white-space: nowrap;
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+
+        .gesture-pulse {
+            animation: pulse 0.2s ease;
         }
 
         @media (max-width: 768px) {
@@ -208,17 +191,13 @@
                 font-size: 10px;
                 padding: 5px 10px;
             }
-            .gesture-history {
-                font-size: 10px;
-                bottom: 10px;
-            }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <!-- MJPEG stream from backend -->
-        <img id="cameraFeed" class="camera-feed" src="/video_feed" alt="Camera Feed">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="canvas"></canvas>
         
         <div class="gesture-display">
             <div class="current-gesture">
@@ -247,137 +226,297 @@
             </div>
         </div>
         
-        <div class="status" id="status">Connecting to backend...</div>
+        <div class="status" id="status">Initializing...</div>
         <div class="ha-status" id="haStatus">HA: Connected ✓</div>
         <div class="cooldown-timer" id="cooldownTimer">Cooldown: Ready</div>
-        <div class="gesture-history" id="gestureHistory">Waiting for gesture...</div>
     </div>
 
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    
     <script>
-        // DOM Elements
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const canvasCtx = canvas.getContext('2d');
         const gestureIconEl = document.getElementById('gestureIcon');
         const gestureNameEl = document.getElementById('gestureName');
         const fingerCountEl = document.getElementById('fingerCount');
         const statusEl = document.getElementById('status');
         const haStatusEl = document.getElementById('haStatus');
         const cooldownTimerEl = document.getElementById('cooldownTimer');
-        const gestureHistoryEl = document.getElementById('gestureHistory');
         
-        // Gesture history
-        let lastGestureAction = "";
-        let actionTimeout = null;
+        let camera = null;
+        let hands = null;
         
-        // WebSocket connection to backend
-        const socket = io(window.location.origin, {
-            transports: ['websocket', 'polling'],
-            reconnection: true,
-            reconnectionAttempts: 10,
-            reconnectionDelay: 1000
-        });
-        
-        // Handle connection events
-        socket.on('connect', () => {
-            console.log('✅ Connected to backend WebSocket');
-            statusEl.textContent = '✅ Connected';
-            statusEl.style.color = '#0f0';
-        });
-        
-        socket.on('disconnect', () => {
-            console.log('❌ Disconnected from backend');
-            statusEl.textContent = '❌ Disconnected';
-            statusEl.style.color = '#f00';
-        });
-        
-        socket.on('connect_error', (error) => {
-            console.error('Connection error:', error);
-            statusEl.textContent = '⚠️ Connection error';
-            statusEl.style.color = '#ffaa00';
-        });
-        
-        // Receive gesture updates from backend
-        socket.on('gesture_update', (data) => {
-            // Update gesture display with animation
-            const oldIcon = gestureIconEl.textContent;
-            const newIcon = data.gestureIcon || '🤚';
+        // ================== GESTURE DETECTION ==================
+        // EXACT same finger counting logic as test.html
+        function countExtendedFingers(landmarks) {
+            if (!landmarks) return 0;
             
-            if (oldIcon !== newIcon) {
-                gestureIconEl.style.animation = 'none';
-                gestureIconEl.offsetHeight; // Trigger reflow
-                gestureIconEl.style.animation = 'bounce 0.3s ease';
-            }
+            let count = 0;
             
-            gestureIconEl.textContent = newIcon;
-            gestureNameEl.textContent = data.gestureName || 'No Hand';
-            fingerCountEl.textContent = `Fingers: ${data.fingerCount || 0}`;
+            // Index finger (tip 8 vs pip 6)
+            if (landmarks[8].y < landmarks[6].y - 0.03) count++;
             
-            // Update status based on detection
-            if (data.status === 'detecting') {
-                statusEl.textContent = `🎥 ${data.gestureName}`;
-                statusEl.style.color = '#0f0';
-            } else if (data.status === 'no_hand') {
-                statusEl.textContent = '👋 No hand';
-                statusEl.style.color = '#ffaa00';
-            }
+            // Middle finger (tip 12 vs pip 10)
+            if (landmarks[12].y < landmarks[10].y - 0.03) count++;
             
-            // Update cooldown timer
-            if (data.cooldownRemaining > 0) {
-                cooldownTimerEl.textContent = `⏱️ Cooldown: ${data.cooldownRemaining.toFixed(1)}s`;
-                cooldownTimerEl.style.color = '#ffaa00';
+            // Ring finger (tip 16 vs pip 14)
+            if (landmarks[16].y < landmarks[14].y - 0.02) count++;
+            
+            // Pinky (tip 20 vs pip 18)
+            if (landmarks[20].y < landmarks[18].y - 0.02) count++;
+            
+            // Thumb (horizontal position based on hand orientation)
+            const isRightHand = landmarks[5].x < landmarks[17].x;
+            if (isRightHand) {
+                if (landmarks[4].x < landmarks[3].x - 0.02) count++;
             } else {
-                cooldownTimerEl.textContent = '⚡ Cooldown: Ready';
-                cooldownTimerEl.style.color = '#0f0';
+                if (landmarks[4].x > landmarks[3].x + 0.02) count++;
             }
             
-            // Show last action
-            if (data.lastAction && data.lastAction !== '') {
-                lastGestureAction = data.lastAction;
-                gestureHistoryEl.textContent = `🎯 Last: ${data.lastAction}`;
-                gestureHistoryEl.style.color = '#0f0';
+            return count;
+        }
+        
+        function getGestureInfo(fingerCount) {
+            switch(fingerCount) {
+                case 0:
+                    return { name: 'Fist', icon: '✊' };
+                case 2:
+                    return { name: '2 Fingers', icon: '✌️' };
+                case 3:
+                    return { name: '3 Fingers', icon: '👌' };
+                case 5:
+                    return { name: 'Palm', icon: '✋' };
+                default:
+                    return { name: `${fingerCount} Finger${fingerCount !== 1 ? 's' : ''}`, icon: '🖐️' };
+            }
+        }
+        
+        // Draw hand landmarks on canvas
+        function drawHand(landmarks, fingerCount, cooldownRemaining) {
+            if (!landmarks) return;
+            
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw connections
+            const connections = [
+                [0,1], [1,2], [2,3], [3,4],
+                [0,5], [5,6], [6,7], [7,8],
+                [0,9], [9,10], [10,11], [11,12],
+                [0,13], [13,14], [14,15], [15,16],
+                [0,17], [17,18], [18,19], [19,20],
+                [5,9], [9,13], [13,17]
+            ];
+            
+            canvasCtx.beginPath();
+            canvasCtx.strokeStyle = '#00ff00';
+            canvasCtx.lineWidth = 2.5;
+            
+            for (let conn of connections) {
+                const p1 = landmarks[conn[0]];
+                const p2 = landmarks[conn[1]];
+                if (p1 && p2) {
+                    canvasCtx.moveTo(p1.x * canvas.width, p1.y * canvas.height);
+                    canvasCtx.lineTo(p2.x * canvas.width, p2.y * canvas.height);
+                    canvasCtx.stroke();
+                }
+            }
+            
+            // Draw landmarks
+            for (let i = 0; i < landmarks.length; i++) {
+                const lm = landmarks[i];
+                const x = lm.x * canvas.width;
+                const y = lm.y * canvas.height;
                 
-                // Also show in HA status
-                haStatusEl.textContent = `⚡ ${data.lastAction}`;
-                haStatusEl.style.color = '#0f0';
+                canvasCtx.beginPath();
+                const isTip = [4, 8, 12, 16, 20].includes(i);
+                canvasCtx.fillStyle = isTip ? '#ffd700' : '#ff4444';
+                canvasCtx.arc(x, y, isTip ? 6 : 4, 0, 2 * Math.PI);
+                canvasCtx.fill();
+            }
+            
+            // Draw info text
+            canvasCtx.font = "bold 24px 'Segoe UI'";
+            canvasCtx.fillStyle = '#ffffff';
+            canvasCtx.shadowColor = 'black';
+            canvasCtx.shadowBlur = 4;
+            canvasCtx.fillText(`✋ ${fingerCount}`, 20, 50);
+            
+            if (cooldownRemaining > 0) {
+                canvasCtx.fillStyle = '#ffaa44';
+                canvasCtx.fillText(`⏱️ ${cooldownRemaining.toFixed(1)}s`, 20, 95);
+            }
+            
+            canvasCtx.shadowBlur = 0;
+            canvasCtx.restore();
+        }
+        
+        // Main MediaPipe results handler
+        function onResults(results) {
+            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+                gestureIconEl.textContent = '🤚';
+                gestureNameEl.textContent = 'No Hand';
+                fingerCountEl.textContent = 'Fingers: 0';
+                canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+                return;
+            }
+            
+            const landmarks = results.multiHandLandmarks[0];
+            const fingerCount = countExtendedFingers(landmarks);
+            const gesture = getGestureInfo(fingerCount);
+            
+            // Add pulse animation on gesture change
+            if (gestureIconEl.textContent !== gesture.icon) {
+                gestureIconEl.classList.add('gesture-pulse');
+                setTimeout(() => gestureIconEl.classList.remove('gesture-pulse'), 200);
+            }
+            
+            gestureIconEl.textContent = gesture.icon;
+            gestureNameEl.textContent = gesture.name;
+            fingerCountEl.textContent = `Fingers: ${fingerCount}`;
+            
+            // Get cooldown from backend (via WebSocket)
+            const cooldown = parseFloat(cooldownTimerEl.textContent.split(' ')[1]) || 0;
+            drawHand(landmarks, fingerCount, cooldown);
+        }
+        
+        // Initialize MediaPipe Hands
+        function initHandDetection() {
+            hands = new Hands({
+                locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+                }
+            });
+            
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+            
+            hands.onResults(onResults);
+        }
+        
+        // Start camera
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                        facingMode: 'user'
+                    } 
+                });
                 
-                // Reset after 2 seconds
-                if (actionTimeout) clearTimeout(actionTimeout);
-                actionTimeout = setTimeout(() => {
-                    if (socket.connected) {
-                        haStatusEl.textContent = 'HA: Connected ✓';
-                        haStatusEl.style.color = '#0f0';
+                video.srcObject = stream;
+                await video.play();
+                
+                const setCanvasSize = () => {
+                    if (video.videoWidth > 0) {
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        statusEl.textContent = '✅ Camera Active - Show Hand';
+                        statusEl.style.color = '#0f0';
+                        return true;
                     }
-                    gestureHistoryEl.textContent = `✓ Gesture detected`;
-                    setTimeout(() => {
-                        if (gestureHistoryEl.textContent === '✓ Gesture detected') {
-                            gestureHistoryEl.textContent = 'Ready for gestures...';
-                            gestureHistoryEl.style.color = '#888';
+                    return false;
+                };
+                
+                let attempts = 0;
+                const checkSize = setInterval(() => {
+                    if (setCanvasSize() || attempts > 30) {
+                        clearInterval(checkSize);
+                    }
+                    attempts++;
+                }, 100);
+                
+                camera = new Camera(video, {
+                    onFrame: async () => {
+                        if (hands && video.videoWidth > 0) {
+                            await hands.send({ image: video });
                         }
-                    }, 2000);
-                }, 2000);
+                    },
+                    width: 1280,
+                    height: 720
+                });
+                
+                camera.start();
+                
+            } catch (error) {
+                console.error('Camera error:', error);
+                statusEl.textContent = '❌ Camera Error: ' + error.message;
+                statusEl.style.color = '#f00';
+            }
+        }
+        
+        // WebSocket connection to backend for HA status
+        let wsConnected = false;
+        
+        function connectBackend() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/socket.io/?EIO=4&transport=websocket`;
+            
+            // Socket.IO client is loaded from CDN
+            if (typeof io !== 'undefined') {
+                const socket = io();
+                
+                socket.on('connect', () => {
+                    console.log('✅ Connected to backend');
+                    wsConnected = true;
+                    haStatusEl.textContent = 'HA: Connected ✓';
+                    haStatusEl.style.color = '#0f0';
+                });
+                
+                socket.on('gesture_update', (data) => {
+                    if (data.cooldownRemaining > 0) {
+                        cooldownTimerEl.textContent = `Cooldown: ${data.cooldownRemaining.toFixed(1)}s`;
+                        cooldownTimerEl.style.color = '#ffaa00';
+                    } else {
+                        cooldownTimerEl.textContent = 'Cooldown: Ready';
+                        cooldownTimerEl.style.color = '#0f0';
+                    }
+                    
+                    if (data.lastAction && data.lastAction !== '') {
+                        haStatusEl.textContent = `⚡ ${data.lastAction}`;
+                        haStatusEl.style.color = '#0f0';
+                        setTimeout(() => {
+                            if (wsConnected) {
+                                haStatusEl.textContent = 'HA: Connected ✓';
+                            }
+                        }, 1500);
+                    }
+                });
+                
+                socket.on('disconnect', () => {
+                    wsConnected = false;
+                    haStatusEl.textContent = 'HA: Reconnecting...';
+                    haStatusEl.style.color = '#ffaa00';
+                });
+            } else {
+                // Fallback: just show HA as connected (no backend)
+                haStatusEl.textContent = 'HA: Connected ✓';
+                haStatusEl.style.color = '#0f0';
+            }
+        }
+        
+        // Initialize everything
+        initHandDetection();
+        startCamera();
+        connectBackend();
+        
+        window.addEventListener('resize', () => {
+            if (video.videoWidth > 0) {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
             }
         });
         
-        // Initial HA status
-        haStatusEl.textContent = 'HA: Connected ✓';
-        haStatusEl.style.color = '#0f0';
-        
-        // Camera feed error handling
-        const cameraFeed = document.getElementById('cameraFeed');
-        cameraFeed.onerror = () => {
-            console.log('Camera feed not available');
-            statusEl.textContent = '⚠️ Camera feed unavailable';
-            statusEl.style.color = '#ffaa00';
-        };
-        
-        cameraFeed.onload = () => {
-            console.log('Camera feed loaded');
-            if (statusEl.textContent === '⚠️ Camera feed unavailable') {
-                statusEl.textContent = '✅ Connected';
-                statusEl.style.color = '#0f0';
-            }
-        };
-        
-        console.log('Frontend UI ready - waiting for gesture detection...');
+        statusEl.textContent = '✅ Ready - Show your hand!';
     </script>
 </body>
 </html>

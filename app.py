@@ -3,8 +3,8 @@
 Gesture Control Add-on for Home Assistant
 - RTSP camera stream processing with MediaPipe Hands
 - WebSocket server for frontend UI updates
-- MJPEG stream for camera feed
 - Home Assistant API integration via Supervisor
+- ACCURATE finger counting (same logic as test.html)
 """
 
 import asyncio
@@ -18,10 +18,10 @@ import threading
 import os
 import sys
 import base64
-import httpx
-import socketio
 from aiohttp import web
-from aiohttp import web_response
+import socketio
+import httpx
+from collections import deque
 
 # Configure logging
 logging.basicConfig(
@@ -30,13 +30,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Global variables
+# Configuration (load from add-on options)
 RTSP_URL = ""
 STRIP_LIGHT_ENTITY = "light.strip_light"
 ROW_3_ENTITY = "light.row_3"
 COOLDOWN_SECONDS = 2
 DETECTION_CONFIDENCE = 0.5
 TRACKING_CONFIDENCE = 0.5
+FRAME_SKIP = 2  # Process every 2nd frame for performance
 
 # Try to load config from add-on options
 try:
@@ -51,12 +52,9 @@ try:
             DETECTION_CONFIDENCE = config.get('detection_confidence', DETECTION_CONFIDENCE)
             TRACKING_CONFIDENCE = config.get('tracking_confidence', TRACKING_CONFIDENCE)
             logger.info(f"✅ Loaded config from /data/options.json")
-            logger.info(f"   RTSP URL: {RTSP_URL[:50] if RTSP_URL else 'NOT SET'}...")
             logger.info(f"   Strip Light: {STRIP_LIGHT_ENTITY}")
             logger.info(f"   Row 3: {ROW_3_ENTITY}")
             logger.info(f"   Cooldown: {COOLDOWN_SECONDS}s")
-    else:
-        logger.warning(f"Config file not found: {config_path}")
 except Exception as e:
     logger.error(f"Error loading config: {e}")
 
@@ -71,23 +69,23 @@ current_gesture_name = "No Hand"
 current_gesture_icon = "🤚"
 last_action = ""
 detection_status = "no_hand"
-
-# Frame storage for MJPEG stream
-current_frame = None
-frame_lock = threading.Lock()
+person_detected = True  # For Frigate integration if needed
 
 # WebSocket server for frontend
 sio = socketio.AsyncServer(cors_allowed_origins='*', async_mode='aiohttp')
 app = web.Application()
 sio.attach(app)
 
-# -------------------------------------------------------------------------
-# MediaPipe Hands Finger Counting (EXACT same logic as HTML version)
-# -------------------------------------------------------------------------
+# ============================================================================
+# ACCURATE FINGER COUNTING - EXACT SAME LOGIC AS TEST.HTML
+# ============================================================================
 
 def count_extended_fingers(landmarks):
-    """Count extended fingers - exact logic from original HTML"""
-    if not landmarks:
+    """
+    Count extended fingers - EXACT logic from working test.html
+    This matches the JavaScript version perfectly for consistency
+    """
+    if not landmarks or len(landmarks) < 21:
         return 0
     
     count = 0
@@ -109,11 +107,14 @@ def count_extended_fingers(landmarks):
         count += 1
     
     # Thumb (horizontal position based on hand orientation)
+    # Determine if it's right hand by comparing wrist points
     is_right_hand = landmarks[5].x < landmarks[17].x
     if is_right_hand:
+        # Right hand: thumb extended if tip is to the left of IP joint
         if landmarks[4].x < landmarks[3].x - 0.02:
             count += 1
     else:
+        # Left hand: thumb extended if tip is to the right of IP joint
         if landmarks[4].x > landmarks[3].x + 0.02:
             count += 1
     
@@ -121,7 +122,7 @@ def count_extended_fingers(landmarks):
 
 
 def get_gesture_info(finger_count):
-    """Get gesture info based on finger count"""
+    """Get gesture info based on finger count - matching test.html"""
     if finger_count == 0:
         return {'name': 'Fist', 'icon': '✊'}
     elif finger_count == 2:
@@ -135,39 +136,61 @@ def get_gesture_info(finger_count):
         return {'name': f'{finger_count} Finger{plural}', 'icon': '🖐️'}
 
 
-def draw_hand_landmarks(frame, landmarks):
-    """Draw hand landmarks on frame for visual feedback"""
-    h, w, _ = frame.shape
+def draw_hand_annotations(frame, landmarks, finger_count):
+    """
+    Draw hand landmarks and skeleton on frame for debugging
+    Returns annotated frame
+    """
+    if not landmarks:
+        return frame
+    
+    h, w = frame.shape[:2]
     
     # Draw connections
     connections = [
-        [0,1], [1,2], [2,3], [3,4],  # Thumb
-        [0,5], [5,6], [6,7], [7,8],  # Index
-        [0,9], [9,10], [10,11], [11,12],  # Middle
-        [0,13], [13,14], [14,15], [15,16],  # Ring
-        [0,17], [17,18], [18,19], [19,20],  # Pinky
-        [5,9], [9,13], [13,17]  # Palm
+        [0, 1], [1, 2], [2, 3], [3, 4],  # Thumb
+        [0, 5], [5, 6], [6, 7], [7, 8],  # Index
+        [0, 9], [9, 10], [10, 11], [11, 12],  # Middle
+        [0, 13], [13, 14], [14, 15], [15, 16],  # Ring
+        [0, 17], [17, 18], [18, 19], [19, 20],  # Pinky
+        [5, 9], [9, 13], [13, 17]  # Palm
     ]
     
-    for connection in connections:
-        x1, y1 = int(landmarks[connection[0]].x * w), int(landmarks[connection[0]].y * h)
-        x2, y2 = int(landmarks[connection[1]].x * w), int(landmarks[connection[1]].y * h)
-        cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    for conn in connections:
+        p1 = landmarks[conn[0]]
+        p2 = landmarks[conn[1]]
+        pt1 = (int(p1.x * w), int(p1.y * h))
+        pt2 = (int(p2.x * w), int(p2.y * h))
+        cv2.line(frame, pt1, pt2, (0, 255, 0), 2)
     
     # Draw landmarks
     for i, lm in enumerate(landmarks):
-        x, y = int(lm.x * w), int(lm.y * h)
+        x = int(lm.x * w)
+        y = int(lm.y * h)
         is_tip = i in [4, 8, 12, 16, 20]
         color = (0, 255, 255) if is_tip else (0, 0, 255)
         radius = 6 if is_tip else 4
         cv2.circle(frame, (x, y), radius, color, -1)
     
+    # Draw finger count text
+    cv2.putText(frame, f"Fingers: {finger_count}", (10, 50),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+    
+    # Draw cooldown if active
+    global last_trigger_time, COOLDOWN_SECONDS
+    if last_trigger_time:
+        elapsed = time.time() - last_trigger_time
+        if elapsed < COOLDOWN_SECONDS:
+            remaining = COOLDOWN_SECONDS - elapsed
+            cv2.putText(frame, f"Cooldown: {remaining:.1f}s", (10, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
+    
     return frame
 
 
-# -------------------------------------------------------------------------
+# ============================================================================
 # Home Assistant API Calls
-# -------------------------------------------------------------------------
+# ============================================================================
 
 async def call_ha_service(service, entity_id):
     """Call Home Assistant service via Supervisor API"""
@@ -189,7 +212,7 @@ async def call_ha_service(service, entity_id):
                 logger.info(f"✅ {service} → {entity_id}")
                 return True
             else:
-                logger.error(f"HA API error: {response.status_code} - {response.text}")
+                logger.error(f"HA API error: {response.status_code}")
                 return False
     except Exception as e:
         logger.error(f"HA API exception: {e}")
@@ -197,70 +220,72 @@ async def call_ha_service(service, entity_id):
 
 
 async def trigger_action(finger_count):
-    """Trigger HA action based on finger count (with cooldown)"""
+    """Trigger HA action based on finger count with cooldown"""
     global last_gesture, last_trigger_time, last_action
     
     now = time.time()
     
-    # Cooldown check
+    # Cooldown check - prevent repeated triggers of same gesture
     if last_gesture == finger_count and (now - last_trigger_time) < COOLDOWN_SECONDS:
         return None
-    
-    last_gesture = finger_count
-    last_trigger_time = now
     
     action = None
     entity = None
     service = None
     
-    if finger_count == 0:
+    # Map finger count to actions (same as test.html)
+    if finger_count == 0:  # Fist
         action = "turn_on"
         entity = STRIP_LIGHT_ENTITY
         service = "turn_on"
-        last_action = f"ON {entity.split('.')[1]}"
-    elif finger_count == 2:
+    elif finger_count == 2:  # Peace sign / 2 fingers
         action = "turn_on"
         entity = ROW_3_ENTITY
         service = "turn_on"
-        last_action = f"ON {entity.split('.')[1]}"
-    elif finger_count == 3:
+    elif finger_count == 3:  # Three fingers
         action = "turn_off"
         entity = ROW_3_ENTITY
         service = "turn_off"
-        last_action = f"OFF {entity.split('.')[1]}"
-    elif finger_count == 5:
+    elif finger_count == 5:  # Open palm
         action = "turn_off"
         entity = STRIP_LIGHT_ENTITY
         service = "turn_off"
-        last_action = f"OFF {entity.split('.')[1]}"
     
     if action and entity:
-        logger.info(f"🎯 Gesture detected: {get_gesture_info(finger_count)['name']} → {last_action}")
-        await call_ha_service(service, entity)
-        return {"action": action, "entity": entity}
+        last_gesture = finger_count
+        last_trigger_time = now
+        last_action = f"{action.split('_')[1].upper()} {entity.split('.')[1]}"
+        
+        success = await call_ha_service(service, entity)
+        if success:
+            logger.info(f"🎯 Action triggered: {last_action}")
+            return {"action": action, "entity": entity}
     
     return None
 
 
-# -------------------------------------------------------------------------
-# RTSP Camera Processing Thread
-# -------------------------------------------------------------------------
+# ============================================================================
+# RTSP Camera Processing Thread with Accurate Detection
+# ============================================================================
 
 def camera_processor():
-    """Background thread for RTSP camera processing"""
-    global current_finger_count, current_gesture_name, current_gesture_icon, detection_status, current_frame
+    """Background thread for RTSP camera processing with accurate hand detection"""
+    global current_finger_count, current_gesture_name, current_gesture_icon, detection_status
     
     if not RTSP_URL:
         logger.error("❌ No RTSP URL configured, camera processor stopped")
         return
     
-    logger.info(f"📹 Starting camera processor with URL: {RTSP_URL[:50]}...")
+    logger.info(f"📹 Starting camera processor with MediaPipe Hands")
+    logger.info(f"   Detection confidence: {DETECTION_CONFIDENCE}")
+    logger.info(f"   Tracking confidence: {TRACKING_CONFIDENCE}")
     
+    # Initialize MediaPipe Hands
     mp_hands = mp.solutions.hands
     hands = mp_hands.Hands(
         static_image_mode=False,
         max_num_hands=1,
-        model_complexity=1,
+        model_complexity=1,  # Use complexity 1 for balance of speed/accuracy
         min_detection_confidence=DETECTION_CONFIDENCE,
         min_tracking_confidence=TRACKING_CONFIDENCE
     )
@@ -268,8 +293,7 @@ def camera_processor():
     cap = None
     reconnect_delay = 1
     max_reconnect_delay = 30
-    frame_count = 0
-    last_log_time = 0
+    frame_counter = 0
     
     while True:
         try:
@@ -277,85 +301,68 @@ def camera_processor():
                 logger.info(f"🔌 Connecting to RTSP stream...")
                 cap = cv2.VideoCapture(RTSP_URL)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                cap.set(cv2.CAP_PROP_FPS, 30)
+                
                 if not cap.isOpened():
                     raise Exception("Failed to open RTSP stream")
+                
                 logger.info("✅ RTSP stream connected successfully")
                 reconnect_delay = 1
+                frame_counter = 0
             
             ret, frame = cap.read()
             if not ret:
                 raise Exception("Failed to read frame")
             
-            frame_count += 1
-            # Process every frame for better detection
-            # Flip horizontally for mirror effect
-            frame = cv2.flip(frame, 1)
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame_counter += 1
             
-            results = hands.process(rgb_frame)
-            
-            # Draw debug info
-            if results.multi_hand_landmarks:
-                detection_status = "detecting"
-                landmarks = results.multi_hand_landmarks[0]
+            # Process every Nth frame for performance
+            if frame_counter % FRAME_SKIP == 0:
+                # Flip horizontally for mirror effect (like test.html)
+                frame = cv2.flip(frame, 1)
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 
-                # Count fingers
-                finger_count = count_extended_fingers(landmarks)
-                gesture = get_gesture_info(finger_count)
+                # Process with MediaPipe
+                results = hands.process(rgb_frame)
                 
-                # Update global state
-                if current_finger_count != finger_count:
-                    logger.info(f"🖐️ Gesture changed: {finger_count} fingers → {gesture['name']}")
-                
-                current_finger_count = finger_count
-                current_gesture_name = gesture['name']
-                current_gesture_icon = gesture['icon']
-                
-                # Draw hand landmarks on frame
-                frame = draw_hand_landmarks(frame, landmarks)
-                
-                # Add text overlay
-                cv2.putText(frame, f"Gesture: {gesture['name']}", (10, 30), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                cv2.putText(frame, f"Fingers: {finger_count}", (10, 70), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                
-                # Show cooldown if active
-                now = time.time()
-                if last_trigger_time and (now - last_trigger_time) < COOLDOWN_SECONDS:
-                    remaining = COOLDOWN_SECONDS - (now - last_trigger_time)
-                    cv2.putText(frame, f"Cooldown: {remaining:.1f}s", (10, 110), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
-                
-                # Trigger HA action
-                try:
-                    loop = asyncio.get_event_loop()
+                if results.multi_hand_landmarks:
+                    detection_status = "detecting"
+                    landmarks = results.multi_hand_landmarks[0]
+                    
+                    # ACCURATE finger counting using exact same logic
+                    finger_count = count_extended_fingers(landmarks)
+                    gesture = get_gesture_info(finger_count)
+                    
+                    # Update global state
+                    if current_finger_count != finger_count:
+                        logger.debug(f"Gesture changed: {finger_count} fingers ({gesture['name']})")
+                    
+                    current_finger_count = finger_count
+                    current_gesture_name = gesture['name']
+                    current_gesture_icon = gesture['icon']
+                    
+                    # Draw annotations for debugging (optional, can be disabled)
+                    # annotated = draw_hand_annotations(frame, landmarks, finger_count)
+                    
+                    # Trigger HA action (run in event loop)
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                    
                     asyncio.run_coroutine_threadsafe(
-                        trigger_action(finger_count), loop
+                        trigger_action(finger_count), 
+                        loop if loop.is_running() else asyncio.get_event_loop()
                     )
-                except Exception as e:
-                    logger.error(f"Error triggering action: {e}")
-            else:
-                if detection_status != "no_hand":
-                    logger.debug("No hand detected")
-                detection_status = "no_hand"
-                current_finger_count = 0
-                current_gesture_name = "No Hand"
-                current_gesture_icon = "🤚"
-                
-                cv2.putText(frame, "No hand detected", (10, 30), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-            
-            # Store frame for MJPEG stream
-            with frame_lock:
-                _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                current_frame = jpeg.tobytes()
-            
-            # Log detection every 30 seconds
-            if time.time() - last_log_time > 30:
-                if detection_status == "detecting":
-                    logger.info(f"📊 Active detection: {current_gesture_name} ({current_finger_count} fingers)")
-                last_log_time = time.time()
+                else:
+                    # No hand detected
+                    if detection_status != "no_hand":
+                        logger.debug("No hand detected")
+                    detection_status = "no_hand"
+                    current_finger_count = 0
+                    current_gesture_name = "No Hand"
+                    current_gesture_icon = "🤚"
             
             # Reset reconnect delay on successful frame
             reconnect_delay = 1
@@ -373,12 +380,12 @@ def camera_processor():
             current_gesture_icon = "🤚"
         
         # Small sleep to prevent CPU hogging
-        time.sleep(0.033)  # ~30fps
+        time.sleep(0.03)
 
 
-# -------------------------------------------------------------------------
+# ============================================================================
 # WebSocket Events for Frontend
-# -------------------------------------------------------------------------
+# ============================================================================
 
 @sio.on('connect')
 async def connect(sid, environ):
@@ -389,6 +396,7 @@ async def connect(sid, environ):
         'gestureIcon': current_gesture_icon,
         'lastAction': last_action,
         'status': detection_status,
+        'personDetected': person_detected,
         'cooldownRemaining': max(0, COOLDOWN_SECONDS - (time.time() - last_trigger_time)) if last_trigger_time else 0
     }, room=sid)
 
@@ -411,13 +419,14 @@ async def broadcast_gesture_state():
         'gestureIcon': current_gesture_icon,
         'lastAction': last_action,
         'status': detection_status,
+        'personDetected': person_detected,
         'cooldownRemaining': cooldown_remaining
     })
 
 
-# -------------------------------------------------------------------------
+# ============================================================================
 # HTTP Routes
-# -------------------------------------------------------------------------
+# ============================================================================
 
 async def index_handler(request):
     """Serve the frontend UI"""
@@ -425,13 +434,14 @@ async def index_handler(request):
         possible_paths = [
             '/app/web/index.html',
             './web/index.html',
+            os.path.join(os.path.dirname(__file__), 'web', 'index.html')
         ]
         
         html_content = None
         for path in possible_paths:
             if os.path.exists(path):
                 logger.info(f"📄 Found index.html at {path}")
-                with open(path, 'r') as f:
+                with open(path, 'r', encoding='utf-8') as f:
                     html_content = f.read()
                 break
         
@@ -442,35 +452,7 @@ async def index_handler(request):
         return web.Response(text=html_content, content_type='text/html')
     except Exception as e:
         logger.error(f"Error serving index: {e}")
-        return web.Response(text=f"Error loading UI: {str(e)}", status=500)
-
-
-async def video_feed_handler(request):
-    """MJPEG stream endpoint"""
-    response = web.StreamResponse()
-    response.headers['Content-Type'] = 'multipart/x-mixed-replace; boundary=frame'
-    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    response.headers['Pragma'] = 'no-cache'
-    response.headers['Expires'] = '0'
-    await response.prepare(request)
-    
-    logger.info("📹 MJPEG stream started")
-    
-    while True:
-        try:
-            if current_frame:
-                await response.write(b'--frame\r\n')
-                await response.write(b'Content-Type: image/jpeg\r\n')
-                await response.write(f'Content-Length: {len(current_frame)}\r\n\r\n'.encode())
-                await response.write(current_frame)
-                await response.write(b'\r\n')
-            await asyncio.sleep(0.033)  # ~30fps
-        except Exception as e:
-            logger.error(f"MJPEG stream error: {e}")
-            break
-    
-    logger.info("📹 MJPEG stream ended")
-    return response
+        return web.Response(text=f"Error: {str(e)}", status=500)
 
 
 async def health_handler(request):
@@ -478,24 +460,19 @@ async def health_handler(request):
     return web.json_response({
         'status': 'running',
         'rtsp_configured': bool(RTSP_URL),
-        'rtsp_url': RTSP_URL[:50] if RTSP_URL else '',
         'gesture': current_gesture_name,
         'finger_count': current_finger_count,
         'detection_status': detection_status,
         'strip_light_entity': STRIP_LIGHT_ENTITY,
         'row_3_entity': ROW_3_ENTITY,
-        'cooldown_seconds': COOLDOWN_SECONDS
+        'cooldown_seconds': COOLDOWN_SECONDS,
+        'last_action': last_action
     })
 
 
-async def test_handler(request):
-    """Test endpoint"""
-    return web.Response(text="✅ Gesture Control Add-on is running!")
-
-
-# -------------------------------------------------------------------------
+# ============================================================================
 # CORS Middleware
-# -------------------------------------------------------------------------
+# ============================================================================
 
 @web.middleware
 async def cors_middleware(request, handler):
@@ -512,9 +489,9 @@ async def cors_middleware(request, handler):
     return response
 
 
-# -------------------------------------------------------------------------
+# ============================================================================
 # Background Task for Broadcasting
-# -------------------------------------------------------------------------
+# ============================================================================
 
 async def broadcast_task():
     """Periodically broadcast gesture state to frontend"""
@@ -523,17 +500,17 @@ async def broadcast_task():
             await broadcast_gesture_state()
         except Exception as e:
             logger.error(f"Broadcast error: {e}")
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.1)  # 10Hz updates
 
 
-# -------------------------------------------------------------------------
-# Main Application Setup
-# -------------------------------------------------------------------------
+# ============================================================================
+# Main Application
+# ============================================================================
 
 async def main():
     """Main async entry point"""
     logger.info("=" * 60)
-    logger.info("🎮 Starting Gesture Control Add-on")
+    logger.info("🎮 Starting Gesture Control Add-on (ACCURATE DETECTION)")
     logger.info("=" * 60)
     logger.info(f"📹 RTSP URL: {'✅ Configured' if RTSP_URL else '❌ NOT CONFIGURED'}")
     logger.info(f"💡 Strip Light: {STRIP_LIGHT_ENTITY}")
@@ -560,21 +537,19 @@ async def main():
     
     # Setup HTTP routes
     app.router.add_get('/', index_handler)
-    app.router.add_get('/video_feed', video_feed_handler)
     app.router.add_get('/health', health_handler)
-    app.router.add_get('/test', test_handler)
+    app.router.add_options('/', cors_middleware)
     
     # Run web server
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', 8099)
     await site.start()
+    
     logger.info("=" * 60)
     logger.info("🌐 Web server started on port 8099")
     logger.info(f"📍 Access the UI at: http://[YOUR-IP]:8099/")
-    logger.info(f"📹 Camera feed: http://[YOUR-IP]:8099/video_feed")
     logger.info(f"🔍 Health check: http://[YOUR-IP]:8099/health")
-    logger.info(f"🧪 Test endpoint: http://[YOUR-IP]:8099/test")
     logger.info("=" * 60)
     
     # Keep running
