@@ -1,67 +1,87 @@
-# Gesture Control Add-on for Home Assistant
+# Gesture Control Add-on for Home Assistant v2.0
 
-Control your lights using hand gestures via RTSP camera.
+Control up to 5 smart devices using hand gestures via RTSP camera. Perfect for controlling lights, switches, fans, and other smart devices with simple hand gestures.
 
 ## Features
 
-- Real-time gesture detection using MediaPipe
-- H.264/H.265 RTSP streaming with no re-encoding (low latency)
-- Home Assistant WebSocket integration
-- Configurable entity IDs and cooldown
-- Web interface with live preview
-- Auto-reconnection for both camera and HA
+- 🖐️ **5-Device Control** - Control up to 5 different entities with individual finger gestures
+- 🎯 **Accurate Gesture Detection** - Improved finger counting with confidence scoring
+- 📹 **Low Latency Streaming** - Direct RTSP stream passthrough with no re-encoding
+- 🔄 **Auto-Reconnection** - Automatically reconnects to both camera and Home Assistant
+- 🎮 **Reset Gesture** - Configurable gesture to turn off all devices at once
+- 📊 **Real-time Feedback** - Web UI with confidence meter and device status
+- ⚡ **High Performance** - Optimized processing with configurable FPS and stability frames
 
 ## Gesture Mapping
 
 | Gesture | Fingers | Action |
 |---------|---------|--------|
-| Fist | 0 | Turn ON strip light |
-| Victory | 2 | Turn ON row light |
-| OK | 3 | Turn OFF row light |
-| Palm | 5 | Turn OFF strip light |
+| Fist | 0 | RESET: Turn OFF all configured devices |
+| 1 Finger | 1 | Toggle Device 1 (on/off) |
+| Victory | 2 | Toggle Device 2 (on/off) |
+| OK | 3 | Toggle Device 3 (on/off) |
+| 4 Fingers | 4 | Toggle Device 4 (on/off) |
+| Palm | 5 | Toggle Device 5 (on/off) |
+
+**Note:** The reset gesture (fist) can be configured to any finger count (0-5) in settings.
 
 ## Configuration
 
-| Option | Description |
-|--------|-------------|
-| rtsp_url | RTSP camera URL (e.g., rtsp://admin:password@192.168.1.100:554/stream) |
-| ha_url | Home Assistant WebSocket URL (default: ws://homeassistant.local:8123/api/websocket) |
-| ha_token | Long-lived access token from Home Assistant |
-| strip_light_entity | Entity ID for strip light (e.g., light.bed_light) |
-| row_light_entity | Entity ID for row light (e.g., light.desk_light) |
-| fps | Target processing FPS (5-30, lower = less CPU usage) |
-| cooldown_seconds | Cooldown between same gestures (prevents spam) |
-| detection_confidence | MediaPipe detection confidence (0.3-0.9) |
-| tracking_confidence | MediaPipe tracking confidence (0.3-0.9) |
+### Basic Settings
 
-## Installation
+| Option | Description | Example |
+|--------|-------------|---------|
+| `rtsp_url` | RTSP camera URL | `rtsp://admin:password@192.168.1.100:554/stream` |
+| `ha_url` | Home Assistant WebSocket URL | `ws://homeassistant.local:8123/api/websocket` |
+| `ha_token` | Long-lived access token from Home Assistant | `eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...` |
 
-1. Copy this folder to `/addons/gesture-control/` on your Home Assistant instance
-2. Go to Settings → Add-ons → Local Add-ons
-3. Click on "Gesture Control" and install
-4. Configure the add-on with your RTSP URL and HA token
-5. Start the add-on
+### Device Entities (5 Configurable)
 
-## Access
+| Option | Description | Example |
+|--------|-------------|---------|
+| `entity_1` | Entity controlled by 1 finger | `light.bedroom_light` |
+| `entity_2` | Entity controlled by 2 fingers | `light.living_room` |
+| `entity_3` | Entity controlled by 3 fingers | `switch.fan` |
+| `entity_4` | Entity controlled by 4 fingers | `light.kitchen` |
+| `entity_5` | Entity controlled by 5 fingers | `cover.garage_door` |
 
-Open the web UI at: `http://[home-assistant-ip]:8099`
+### Performance Settings
 
-## Troubleshooting
+| Option | Description | Range | Default |
+|--------|-------------|-------|---------|
+| `fps` | Target processing FPS | 5-30 | 15 |
+| `frame_width` | Camera frame width | 320-1920 | 640 |
+| `frame_height` | Camera frame height | 240-1080 | 480 |
+| `bitrate` | Stream bitrate | any | 500k |
 
-### HEVC errors in logs
-- The add-on handles HEVC streams, but errors may appear if the stream is corrupted
-- Try reducing camera resolution or switching to H.264 in camera settings
+### Gesture Detection Settings
 
-### No video in browser
-- Check that RTSP URL is correct
-- Ensure camera is accessible from Home Assistant
-- Try accessing the stream directly with VLC to verify
+| Option | Description | Range | Default |
+|--------|-------------|-------|---------|
+| `detection_confidence` | MediaPipe detection confidence | 0.3-0.9 | 0.5 |
+| `tracking_confidence` | MediaPipe tracking confidence | 0.3-0.9 | 0.5 |
+| `cooldown_seconds` | Cooldown between same gestures | 0-5 | 1 |
+| `reset_gesture` | Finger count that resets all devices | 0-5 | 0 |
+| `stability_frames` | Frames needed for gesture stabilization | 3-10 | 5 |
 
-### Gestures not detected
-- Ensure good lighting conditions
-- Hold hand in front of camera at a reasonable distance
-- Adjust detection confidence settings in configuration
+### Example Configuration
 
-## License
-
-MIT
+```json
+{
+  "rtsp_url": "rtsp://admin:MyPassword@192.168.1.50:554/stream",
+  "ha_url": "ws://homeassistant.local:8123/api/websocket",
+  "ha_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
+  "entity_1": "light.bedroom_lamp",
+  "entity_2": "light.living_room_main",
+  "entity_3": "light.kitchen_strip",
+  "entity_4": "switch.garden_lights",
+  "entity_5": "fan.ceiling_fan",
+  "fps": 15,
+  "frame_width": 640,
+  "frame_height": 480,
+  "cooldown_seconds": 1,
+  "detection_confidence": 0.5,
+  "tracking_confidence": 0.5,
+  "reset_gesture": 0,
+  "stability_frames": 5
+}

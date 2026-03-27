@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Gesture Control - 5 Entity Support</title>
+    <title>Gesture Control - Smart Home Integration</title>
     <style>
         * {
             margin: 0;
@@ -42,16 +42,16 @@
             position: fixed;
             bottom: 20px;
             right: 20px;
-            background: rgba(0, 0, 0, 0.9);
+            background: rgba(0, 0, 0, 0.85);
             backdrop-filter: blur(10px);
             border-radius: 20px;
-            padding: 20px;
+            padding: 15px 25px;
             display: flex;
             flex-direction: column;
             align-items: center;
             gap: 10px;
             z-index: 1000;
-            border: 2px solid rgba(255, 255, 255, 0.3);
+            border: 2px solid rgba(255, 255, 255, 0.2);
             box-shadow: 0 4px 20px rgba(0,0,0,0.5);
             min-width: 200px;
             pointer-events: none;
@@ -62,13 +62,8 @@
         }
 
         .gesture-icon {
-            font-size: 80px;
+            font-size: 72px;
             filter: drop-shadow(0 2px 10px rgba(0,0,0,0.5));
-            transition: transform 0.2s;
-        }
-
-        .gesture-icon.gesture-detected {
-            transform: scale(1.1);
         }
 
         .gesture-name {
@@ -86,18 +81,27 @@
             margin-top: 5px;
         }
 
-        .last-action {
-            font-size: 12px;
-            color: #4caf50;
-            margin-top: 5px;
-            font-family: monospace;
-            font-weight: bold;
+        .confidence-bar {
+            width: 100%;
+            height: 3px;
+            background: #333;
+            border-radius: 3px;
+            margin-top: 8px;
+            overflow: hidden;
         }
 
-        .processing-time {
-            font-size: 10px;
-            color: #888;
-            margin-top: 3px;
+        .confidence-fill {
+            height: 100%;
+            background: #4caf50;
+            width: 0%;
+            transition: width 0.2s ease;
+        }
+
+        .last-action {
+            font-size: 12px;
+            color: #0f0;
+            margin-top: 5px;
+            font-family: monospace;
         }
 
         .divider {
@@ -107,31 +111,91 @@
             margin: 5px 0;
         }
 
-        /* Gesture guide grid */
+        /* Entity status grid */
+        .entity-grid {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 15px;
+            z-index: 1000;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            min-width: 280px;
+            pointer-events: none;
+        }
+
+        .entity-title {
+            font-size: 12px;
+            color: #aaa;
+            text-align: center;
+            margin-bottom: 10px;
+            letter-spacing: 1px;
+        }
+
+        .entity-items {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .entity-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 5px 10px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 10px;
+        }
+
+        .entity-icon {
+            font-size: 24px;
+            margin-right: 12px;
+        }
+
+        .entity-info {
+            flex: 1;
+        }
+
+        .entity-name {
+            font-size: 12px;
+            color: #fff;
+            font-weight: 500;
+        }
+
+        .entity-id {
+            font-size: 10px;
+            color: #888;
+            font-family: monospace;
+        }
+
+        .entity-status {
+            font-size: 20px;
+        }
+
+        .entity-status.on {
+            color: #4caf50;
+        }
+
+        .entity-status.off {
+            color: #f44336;
+        }
+
         .gesture-guide {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 10px;
+            display: flex;
+            gap: 15px;
             margin-top: 5px;
-            width: 100%;
+            flex-wrap: wrap;
+            justify-content: center;
         }
 
         .guide-item {
             text-align: center;
-            padding: 8px;
-            background: rgba(255,255,255,0.1);
-            border-radius: 10px;
-            transition: all 0.3s;
-        }
-
-        .guide-item.active {
-            background: rgba(76, 175, 80, 0.3);
-            border: 1px solid #4caf50;
-            transform: scale(1.05);
         }
 
         .guide-icon {
-            font-size: 32px;
+            font-size: 28px;
             filter: drop-shadow(0 2px 5px rgba(0,0,0,0.5));
         }
 
@@ -139,21 +203,19 @@
             font-size: 10px;
             color: #ccc;
             margin-top: 3px;
-            font-weight: bold;
         }
 
         .guide-entity {
-            font-size: 9px;
+            font-size: 8px;
             color: #4caf50;
             margin-top: 2px;
         }
 
-        /* Status indicators */
         .status {
             position: fixed;
             top: 20px;
             left: 20px;
-            background: rgba(0,0,0,0.8);
+            background: rgba(0,0,0,0.7);
             padding: 8px 15px;
             border-radius: 20px;
             color: #0f0;
@@ -168,7 +230,7 @@
             position: fixed;
             top: 20px;
             right: 20px;
-            background: rgba(0,0,0,0.8);
+            background: rgba(0,0,0,0.7);
             padding: 8px 15px;
             border-radius: 20px;
             color: #ffaa00;
@@ -182,13 +244,15 @@
         .fps-counter {
             position: fixed;
             bottom: 20px;
-            left: 20px;
-            background: rgba(0,0,0,0.6);
-            padding: 5px 10px;
-            border-radius: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.5);
+            padding: 4px 12px;
+            border-radius: 20px;
             font-family: monospace;
             font-size: 10px;
             color: #888;
+            pointer-events: none;
             z-index: 1000;
         }
 
@@ -201,42 +265,33 @@
             animation: pulse 0.3s ease-in-out 2;
         }
 
-        @keyframes glow {
-            0% { text-shadow: 0 0 5px #4caf50; }
-            100% { text-shadow: 0 0 20px #4caf50; }
-        }
-
-        .ha-connected-glow {
-            animation: glow 1s ease-in-out;
-        }
-
         @media (max-width: 768px) {
             .gesture-display {
-                padding: 12px;
+                padding: 10px 15px;
                 min-width: 160px;
                 bottom: 10px;
                 right: 10px;
             }
             .gesture-icon {
-                font-size: 60px;
+                font-size: 48px;
             }
             .gesture-name {
-                font-size: 16px;
+                font-size: 14px;
+            }
+            .entity-grid {
+                min-width: 220px;
+                bottom: 10px;
+                left: 10px;
+                padding: 10px;
+            }
+            .entity-icon {
+                font-size: 20px;
+            }
+            .entity-name {
+                font-size: 10px;
             }
             .guide-icon {
-                font-size: 24px;
-            }
-            .guide-text {
-                font-size: 8px;
-            }
-            .guide-entity {
-                font-size: 7px;
-            }
-            .gesture-guide {
-                gap: 5px;
-            }
-            .guide-item {
-                padding: 4px;
+                font-size: 22px;
             }
             .status, .ha-status {
                 font-size: 10px;
@@ -255,12 +310,21 @@
                 <div class="gesture-icon" id="gestureIcon">🤚</div>
                 <div class="gesture-name" id="gestureName">No Hand</div>
                 <div class="finger-count" id="fingerCount">Fingers: 0</div>
+                <div class="confidence-bar" id="confidenceBar">
+                    <div class="confidence-fill" id="confidenceFill"></div>
+                </div>
                 <div class="last-action" id="lastAction">Last: --</div>
-                <div class="processing-time" id="processingTime">Processing: -- ms</div>
             </div>
             <div class="divider"></div>
             <div class="gesture-guide" id="gestureGuide">
-                <!-- Dynamic guide will be populated from config -->
+                <!-- Dynamic gesture guide will be populated -->
+            </div>
+        </div>
+        
+        <div class="entity-grid" id="entityGrid">
+            <div class="entity-title">🎮 CONTROLLED DEVICES</div>
+            <div class="entity-items" id="entityItems">
+                <!-- Dynamic entity status will be populated -->
             </div>
         </div>
         
@@ -275,8 +339,7 @@
             transports: ['websocket', 'polling'],
             reconnection: true,
             reconnectionAttempts: 10,
-            reconnectionDelay: 1000,
-            timeout: 10000
+            reconnectionDelay: 1000
         });
         
         // DOM elements
@@ -285,18 +348,36 @@
         const gestureNameEl = document.getElementById('gestureName');
         const fingerCountEl = document.getElementById('fingerCount');
         const lastActionEl = document.getElementById('lastAction');
-        const processingTimeEl = document.getElementById('processingTime');
         const statusEl = document.getElementById('status');
         const haStatusEl = document.getElementById('haStatus');
         const fpsCounterEl = document.getElementById('fpsCounter');
-        const gestureGuideEl = document.getElementById('gestureGuide');
+        const confidenceFill = document.getElementById('confidenceFill');
+        const gestureGuide = document.getElementById('gestureGuide');
+        const entityItems = document.getElementById('entityItems');
         
-        // Performance tracking
-        let frameCount = 0;
-        let lastFpsUpdate = Date.now();
-        let gestureMappings = [];
+        // Configuration
+        let entityConfig = {
+            entity_1: { name: "Device 1", id: "" },
+            entity_2: { name: "Device 2", id: "" },
+            entity_3: { name: "Device 3", id: "" },
+            entity_4: { name: "Device 4", id: "" },
+            entity_5: { name: "Device 5", id: "" }
+        };
         
-        // Set video source to backend stream with cache busting
+        let entityStates = {1: false, 2: false, 3: false, 4: false, 5: false};
+        let resetGesture = 0;
+        
+        // Gesture mapping
+        const gestureMap = {
+            0: { icon: "✊", name: "Reset", action: "Reset all" },
+            1: { icon: "☝️", name: "1 Finger", action: "Toggle Device 1" },
+            2: { icon: "✌️", name: "2 Fingers", action: "Toggle Device 2" },
+            3: { icon: "👌", name: "3 Fingers", action: "Toggle Device 3" },
+            4: { icon: "🖖", name: "4 Fingers", action: "Toggle Device 4" },
+            5: { icon: "✋", name: "Palm", action: "Toggle Device 5" }
+        };
+        
+        // Set video source to backend stream
         video.src = '/video?t=' + Date.now();
         video.play().catch(e => console.log('Video autoplay blocked:', e));
         
@@ -311,79 +392,120 @@
             }, 3000);
         });
         
-        // Load config from server
-        async function loadConfig() {
+        // Fetch configuration
+        async function fetchConfig() {
             try {
                 const response = await fetch('/config');
                 const config = await response.json();
-                gestureMappings = config.gesture_mappings;
-                updateGestureGuide(config.gesture_mappings);
-            } catch (error) {
-                console.error('Failed to load config:', error);
-                // Fallback to default guide
-                updateDefaultGuide();
+                
+                // Update entity config
+                if (config.entities) {
+                    for (let i = 1; i <= 5; i++) {
+                        const entityKey = `entity_${i}`;
+                        const entityId = config.entities[entityKey];
+                        if (entityId) {
+                            const domain = entityId.split('.')[0];
+                            const name = entityId.split('.')[1] || `Device ${i}`;
+                            entityConfig[entityKey] = {
+                                name: name.replace(/_/g, ' ').toUpperCase(),
+                                id: entityId,
+                                domain: domain
+                            };
+                        } else {
+                            entityConfig[entityKey] = {
+                                name: `Device ${i}`,
+                                id: "",
+                                domain: "light"
+                            };
+                        }
+                    }
+                }
+                
+                resetGesture = config.reset_gesture || 0;
+                
+                // Update gesture map
+                gestureMap[resetGesture] = { ...gestureMap[resetGesture], name: "Reset", action: "Reset all" };
+                
+                // Update UI with config
+                updateGestureGuide();
+                updateEntityGrid();
+                
+                console.log('Config loaded:', entityConfig);
+            } catch (e) {
+                console.error('Failed to fetch config:', e);
             }
         }
         
-        function updateGestureGuide(mappings) {
-            // Sort by finger count
-            mappings.sort((a, b) => a.finger_count - b.finger_count);
-            
-            let html = '';
-            mappings.forEach(mapping => {
-                const gestureInfo = getGestureInfo(mapping.finger_count);
-                html += `
-                    <div class="guide-item" data-finger="${mapping.finger_count}">
-                        <div class="guide-icon">${gestureInfo.icon}</div>
-                        <div class="guide-text">${gestureInfo.name}</div>
-                        <div class="guide-entity">${mapping.name || mapping.entity_id.split('.')[1]}</div>
-                    </div>
-                `;
-            });
-            
-            // Add reset gesture
-            html += `
-                <div class="guide-item" data-finger="0">
-                    <div class="guide-icon">✊</div>
-                    <div class="guide-text">Reset/Fist</div>
-                    <div class="guide-entity">Clear Tracking</div>
-                </div>
-            `;
-            
-            gestureGuideEl.innerHTML = html;
-        }
-        
-        function updateDefaultGuide() {
-            const defaultMappings = [
-                {finger_count: 1, name: "Entity 1"},
-                {finger_count: 2, name: "Entity 2"},
-                {finger_count: 3, name: "Entity 3"},
-                {finger_count: 4, name: "Entity 4"},
-                {finger_count: 5, name: "Entity 5"}
-            ];
-            updateGestureGuide(defaultMappings);
-        }
-        
-        function getGestureInfo(fingerCount) {
-            const mapping = {
-                0: {name: "Reset", icon: "✊"},
-                1: {name: "1 Finger", icon: "☝️"},
-                2: {name: "2 Fingers", icon: "✌️"},
-                3: {name: "3 Fingers", icon: "👌"},
-                4: {name: "4 Fingers", icon: "🖖"},
-                5: {name: "5 Fingers", icon: "✋"}
-            };
-            return mapping[fingerCount] || {name: `${fingerCount} Fingers`, icon: "🖐️"};
-        }
-        
-        function highlightGuideItem(fingerCount) {
-            const items = document.querySelectorAll('.guide-item');
-            items.forEach(item => {
-                item.classList.remove('active');
-                if (item.dataset.finger == fingerCount) {
-                    item.classList.add('active');
+        function updateGestureGuide() {
+            const guides = [];
+            for (let i = 0; i <= 5; i++) {
+                if (i === resetGesture) {
+                    guides.push(`
+                        <div class="guide-item">
+                            <div class="guide-icon">${gestureMap[i]?.icon || '✊'}</div>
+                            <div class="guide-text">${gestureMap[i]?.name || 'Reset'}</div>
+                            <div class="guide-entity">Reset all</div>
+                        </div>
+                    `);
+                } else if (i >= 1 && i <= 5 && entityConfig[`entity_${i}`]?.id) {
+                    const shortName = entityConfig[`entity_${i}`].name.length > 10 ? 
+                        entityConfig[`entity_${i}`].name.substring(0, 10) + '...' : 
+                        entityConfig[`entity_${i}`].name;
+                    guides.push(`
+                        <div class="guide-item">
+                            <div class="guide-icon">${gestureMap[i]?.icon || '🖐️'}</div>
+                            <div class="guide-text">${gestureMap[i]?.name || i + ' Fingers'}</div>
+                            <div class="guide-entity">${shortName}</div>
+                        </div>
+                    `);
                 }
-            });
+            }
+            gestureGuide.innerHTML = guides.join('');
+        }
+        
+        function updateEntityGrid() {
+            const items = [];
+            for (let i = 1; i <= 5; i++) {
+                const entity = entityConfig[`entity_${i}`];
+                if (entity && entity.id) {
+                    const isOn = entityStates[i];
+                    items.push(`
+                        <div class="entity-item">
+                            <div class="entity-icon">${getEntityIcon(entity.domain)}</div>
+                            <div class="entity-info">
+                                <div class="entity-name">${entity.name}</div>
+                                <div class="entity-id">${entity.id}</div>
+                            </div>
+                            <div class="entity-status ${isOn ? 'on' : 'off'}">
+                                ${isOn ? '🔆' : '💡'}
+                            </div>
+                        </div>
+                    `);
+                }
+            }
+            if (items.length === 0) {
+                items.push(`
+                    <div class="entity-item">
+                        <div class="entity-info" style="text-align: center">
+                            <div class="entity-name">No devices configured</div>
+                            <div class="entity-id">Add entities in add-on config</div>
+                        </div>
+                    </div>
+                `);
+            }
+            entityItems.innerHTML = items.join('');
+        }
+        
+        function getEntityIcon(domain) {
+            const icons = {
+                'light': '💡',
+                'switch': '🔌',
+                'fan': '🌀',
+                'cover': '🚪',
+                'media_player': '📺',
+                'climate': '🌡️'
+            };
+            return icons[domain] || '🔧';
         }
         
         // Socket event handlers
@@ -391,13 +513,8 @@
             console.log('✅ Socket.IO connected');
             statusEl.textContent = '✅ Connected';
             statusEl.style.color = '#0f0';
-            loadConfig();
-        });
-        
-        socket.on('connect_error', (error) => {
-            console.error('Socket connection error:', error);
-            statusEl.textContent = '⚠️ Connection error, retrying...';
-            statusEl.style.color = '#ffaa00';
+            fetchConfig();
+            socket.emit('get_entities');
         });
         
         socket.on('disconnect', () => {
@@ -409,52 +526,53 @@
         socket.on('status', (data) => {
             console.log('Status:', data);
             if (data.haConnected !== undefined) {
-                haStatusEl.textContent = data.haConnected ? '✅ HA: Connected' : '❌ HA: Disconnected';
-                haStatusEl.style.color = data.haConnected ? '#4caf50' : '#ffaa00';
-                
-                if (data.haConnected) {
-                    haStatusEl.classList.add('ha-connected-glow');
-                    setTimeout(() => haStatusEl.classList.remove('ha-connected-glow'), 1000);
-                }
-            }
-            if (data.gestureMappings) {
-                gestureMappings = data.gestureMappings;
-                updateGestureGuide(data.gestureMappings);
+                haStatusEl.textContent = data.haConnected ? 'HA: Connected ✓' : 'HA: Disconnected ✗';
+                haStatusEl.style.color = data.haConnected ? '#0f0' : '#ffaa00';
             }
             if (data.message) {
                 statusEl.textContent = data.message;
             }
         });
         
+        socket.on('entity_config', (data) => {
+            if (data.entities) {
+                for (let i = 1; i <= 5; i++) {
+                    const entityKey = `entity_${i}`;
+                    if (data.entities[entityKey]) {
+                        const entityId = data.entities[entityKey];
+                        const domain = entityId.split('.')[0];
+                        const name = entityId.split('.')[1] || `Device ${i}`;
+                        entityConfig[entityKey] = {
+                            name: name.replace(/_/g, ' ').toUpperCase(),
+                            id: entityId,
+                            domain: domain
+                        };
+                    }
+                }
+                updateGestureGuide();
+                updateEntityGrid();
+            }
+        });
+        
+        socket.on('entity_states', (data) => {
+            if (data.states) {
+                entityStates = data.states;
+                updateEntityGrid();
+            }
+        });
+        
         socket.on('gesture', (data) => {
             console.log('Gesture:', data);
             
-            // Update FPS counter
-            frameCount++;
-            const now = Date.now();
-            if (now - lastFpsUpdate >= 1000) {
-                const fps = frameCount;
-                fpsCounterEl.textContent = `FPS: ${fps}`;
-                frameCount = 0;
-                lastFpsUpdate = now;
-            }
-            
-            // Update UI with animation
-            gestureIconEl.textContent = data.gestureIcon || getGestureInfo(data.fingerCount).icon;
+            // Update UI with gesture info
+            gestureIconEl.textContent = data.gestureIcon || getIconForFingers(data.fingerCount);
             gestureNameEl.textContent = data.gestureName || `${data.fingerCount} Fingers`;
             fingerCountEl.textContent = `Fingers: ${data.fingerCount}`;
             
-            // Add visual feedback when gesture is detected
-            if (data.handDetected) {
-                gestureIconEl.classList.add('gesture-detected');
-                setTimeout(() => gestureIconEl.classList.remove('gesture-detected'), 200);
-            }
-            
-            // Highlight the corresponding guide item
-            if (data.fingerCount > 0) {
-                highlightGuideItem(data.fingerCount);
-            } else if (data.fingerCount === 0 && data.handDetected) {
-                highlightGuideItem(0);
+            // Update confidence bar
+            if (data.confidence) {
+                confidenceFill.style.width = `${data.confidence * 100}%`;
+                confidenceFill.style.backgroundColor = data.confidence > 0.7 ? '#4caf50' : '#ff9800';
             }
             
             if (data.lastAction && data.lastAction !== '--') {
@@ -465,50 +583,81 @@
                 }, 600);
             }
             
-            if (data.processingTime) {
-                processingTimeEl.textContent = `Processing: ${data.processingTime} ms`;
-                // Color code based on performance
-                if (data.processingTime < 30) {
-                    processingTimeEl.style.color = '#4caf50';
-                } else if (data.processingTime < 60) {
-                    processingTimeEl.style.color = '#ffaa00';
-                } else {
-                    processingTimeEl.style.color = '#f44336';
-                }
-            }
-            
-            // Update HA status from gesture data
+            // Update HA status
             if (data.haConnected !== undefined) {
-                haStatusEl.textContent = data.haConnected ? '✅ HA: Connected' : '❌ HA: Disconnected';
-                haStatusEl.style.color = data.haConnected ? '#4caf50' : '#ffaa00';
+                haStatusEl.textContent = data.haConnected ? 'HA: Connected ✓' : 'HA: Disconnected ✗';
+                haStatusEl.style.color = data.haConnected ? '#0f0' : '#ffaa00';
             }
         });
+        
+        socket.on('gesture_update', (data) => {
+            // Update gesture display
+            gestureIconEl.textContent = data.gestureIcon || getIconForFingers(data.fingerCount);
+            gestureNameEl.textContent = data.gestureName || `${data.fingerCount} Fingers`;
+            fingerCountEl.textContent = `Fingers: ${data.fingerCount}`;
+            
+            if (data.lastAction && data.lastAction !== '--') {
+                lastActionEl.textContent = `Last: ${data.lastAction}`;
+            }
+            
+            if (data.haConnected !== undefined) {
+                haStatusEl.textContent = data.haConnected ? 'HA: Connected ✓' : 'HA: Disconnected ✗';
+                haStatusEl.style.color = data.haConnected ? '#0f0' : '#ffaa00';
+            }
+            
+            // Update entity states
+            if (data.entityStates) {
+                entityStates = data.entityStates;
+                updateEntityGrid();
+            }
+        });
+        
+        function getIconForFingers(count) {
+            const icons = {
+                0: '✊',
+                1: '☝️',
+                2: '✌️',
+                3: '👌',
+                4: '🖖',
+                5: '✋'
+            };
+            return icons[count] || '🖐️';
+        }
+        
+        // FPS counter from video element
+        let lastFpsTime = performance.now();
+        let fpsFrames = 0;
+        
+        function updateFPS() {
+            const now = performance.now();
+            fpsFrames++;
+            if (now - lastFpsTime >= 1000) {
+                const fps = Math.round(fpsFrames * 1000 / (now - lastFpsTime));
+                fpsCounterEl.textContent = `FPS: ${fps}`;
+                fpsFrames = 0;
+                lastFpsTime = now;
+            }
+            requestAnimationFrame(updateFPS);
+        }
+        
+        requestAnimationFrame(updateFPS);
         
         // Connection timeout fallback
         setTimeout(() => {
             if (!socket.connected) {
                 statusEl.textContent = '⚠️ Waiting for connection...';
-                statusEl.style.color = '#ffaa00';
             }
         }, 3000);
         
-        // Handle page visibility (reconnect video when tab becomes visible)
+        // Handle page visibility
         document.addEventListener('visibilitychange', () => {
             if (!document.hidden && video.paused) {
                 video.play().catch(e => console.log('Play on visibility change:', e));
             }
         });
         
-        // Initial load
-        loadConfig();
-        
-        // Performance monitoring
-        setInterval(() => {
-            if (socket.connected) {
-                statusEl.textContent = '✅ Connected';
-                statusEl.style.color = '#0f0';
-            }
-        }, 5000);
+        // Initial fetch
+        fetchConfig();
     </script>
 </body>
 </html>
