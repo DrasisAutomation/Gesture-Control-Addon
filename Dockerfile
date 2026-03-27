@@ -1,17 +1,19 @@
 FROM python:3.11-slim
 
 # Install system dependencies for OpenCV, MediaPipe, and FFmpeg
+# Using correct package names for Debian
 RUN apt-get update && apt-get install -y \
-    libgl1 \
+    libgl1-mesa-glx \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
     libxrender1 \
     libgomp1 \
+    ffmpeg \
     libavcodec-extra \
     libavformat-extra \
-    libavutil-extra \
-    libswscale-extra \
+    libavutil58 \
+    libswscale6 \
     libxcb-shm0 \
     libxcb-xfixes0 \
     libxcb-shape0 \
@@ -20,19 +22,7 @@ RUN apt-get update && apt-get install -y \
     libxinerama1 \
     libxcursor1 \
     libxi6 \
-    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
-
-# Alternative: If the above fails, use this simpler version
-# RUN apt-get update && apt-get install -y \
-#     libgl1 \
-#     libglib2.0-0 \
-#     libsm6 \
-#     libxext6 \
-#     libxrender1 \
-#     libgomp1 \
-#     ffmpeg \
-#     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -47,7 +37,7 @@ COPY web ./web
 # Create directory for runtime files
 RUN mkdir -p /data
 
-# Expose port for web UI and WebSocket
+# Expose port
 EXPOSE 8099
 
 # Run the application
