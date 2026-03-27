@@ -146,6 +146,15 @@
             pointer-events: none;
         }
 
+        @keyframes pulse {
+            0% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .action-flash {
+            animation: pulse 0.3s ease-in-out 2;
+        }
+
         @media (max-width: 768px) {
             .gesture-display {
                 padding: 10px 15px;
@@ -206,7 +215,12 @@
 
     <script>
         // Socket.IO connection
-        const socket = io(window.location.origin);
+        const socket = io(window.location.origin, {
+            transports: ['websocket', 'polling'],
+            reconnection: true,
+            reconnectionAttempts: 10,
+            reconnectionDelay: 1000
+        });
         
         // DOM elements
         const video = document.getElementById('video');
@@ -217,20 +231,31 @@
         const statusEl = document.getElementById('status');
         const haStatusEl = document.getElementById('haStatus');
         
-        // Set video source to backend stream
-        video.src = '/video';
+        // Set video source to backend stream with cache busting
+        video.src = '/video?t=' + Date.now();
         video.play().catch(e => console.log('Video autoplay blocked:', e));
+        
+        // Reload video on error
+        video.addEventListener('error', (e) => {
+            console.error('Video error:', e);
+            statusEl.textContent = '⚠️ Video stream error, reconnecting...';
+            statusEl.style.color = '#ffaa00';
+            setTimeout(() => {
+                video.src = '/video?t=' + Date.now();
+                video.play().catch(e => console.log('Retry failed:', e));
+            }, 3000);
+        });
         
         // Socket event handlers
         socket.on('connect', () => {
-            console.log('Socket.IO connected');
+            console.log('✅ Socket.IO connected');
             statusEl.textContent = '✅ Connected';
             statusEl.style.color = '#0f0';
         });
         
         socket.on('disconnect', () => {
-            console.log('Socket.IO disconnected');
-            statusEl.textContent = '⚠️ Disconnected';
+            console.log('⚠️ Socket.IO disconnected');
+            statusEl.textContent = '⚠️ Disconnected, reconnecting...';
             statusEl.style.color = '#ffaa00';
         });
         
@@ -253,12 +278,12 @@
             gestureNameEl.textContent = data.gestureName || `${data.fingerCount} Fingers`;
             fingerCountEl.textContent = `Fingers: ${data.fingerCount}`;
             
-            if (data.lastAction) {
+            if (data.lastAction && data.lastAction !== '--') {
                 lastActionEl.textContent = `Last: ${data.lastAction}`;
-                lastActionEl.style.opacity = '1';
+                lastActionEl.classList.add('action-flash');
                 setTimeout(() => {
-                    lastActionEl.style.opacity = '0.7';
-                }, 2000);
+                    lastActionEl.classList.remove('action-flash');
+                }, 600);
             }
             
             // Update HA status from gesture data
@@ -278,19 +303,19 @@
             return icons[count] || '🖐️';
         }
         
-        // Handle video errors
-        video.addEventListener('error', (e) => {
-            console.error('Video error:', e);
-            statusEl.textContent = '❌ Video stream error';
-            statusEl.style.color = '#f00';
-        });
-        
         // Connection timeout fallback
         setTimeout(() => {
-            if (socket.disconnected) {
+            if (!socket.connected) {
                 statusEl.textContent = '⚠️ Waiting for connection...';
             }
         }, 3000);
+        
+        // Handle page visibility (reconnect video when tab becomes visible)
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && video.paused) {
+                video.play().catch(e => console.log('Play on visibility change:', e));
+            }
+        });
     </script>
 </body>
 </html>
