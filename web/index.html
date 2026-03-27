@@ -5,248 +5,68 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Gesture Control - H.264 Stream</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            background: #000;
-            overflow: hidden;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-
-        .container {
-            position: relative;
-            width: 100vw;
-            height: 100vh;
-            background: #000;
-        }
-
-        video {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            transform: scaleX(-1);
-        }
-
-        /* Fallback image for MJPEG */
-        img#mjpegStream {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            transform: scaleX(-1);
-            display: none;
-        }
-
-        /* Gesture display overlay */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #000; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
+        .container { position: relative; width: 100vw; height: 100vh; background: #000; }
+        video, img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
         .gesture-display {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            background: rgba(0, 0, 0, 0.85);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            padding: 15px 25px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 10px;
-            z-index: 1000;
-            border: 2px solid rgba(255, 255, 255, 0.2);
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-            min-width: 200px;
-            pointer-events: none;
-            animation: slideIn 0.3s ease;
+            position: fixed; bottom: 20px; right: 20px;
+            background: rgba(0,0,0,0.85); backdrop-filter: blur(10px);
+            border-radius: 20px; padding: 15px 25px; z-index: 1000;
+            border: 2px solid rgba(255,255,255,0.2); min-width: 200px;
+            pointer-events: none; animation: slideIn 0.3s ease;
         }
-
-        @keyframes slideIn {
-            from {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-            to {
-                transform: translateX(0);
-                opacity: 1;
-            }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .current-gesture { text-align: center; }
+        .gesture-icon { font-size: 64px; transition: transform 0.2s ease; }
+        .gesture-icon.pulse { animation: pulse 0.3s ease; }
+        @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.1); } }
+        .gesture-name { font-size: 20px; font-weight: bold; color: #0f0; margin-top: 5px; text-transform: uppercase; }
+        .finger-count { font-size: 14px; color: #aaa; margin-top: 5px; }
+        .divider { width: 100%; height: 1px; background: rgba(255,255,255,0.2); margin: 10px 0; }
+        .gesture-guide { display: flex; gap: 15px; justify-content: center; }
+        .guide-item { text-align: center; }
+        .guide-icon { font-size: 28px; }
+        .guide-text { font-size: 10px; color: #ccc; margin-top: 3px; }
+        .status, .ha-status, .encoder-status, .cooldown {
+            position: fixed; background: rgba(0,0,0,0.7); padding: 8px 15px;
+            border-radius: 20px; font-family: monospace; font-size: 12px;
+            z-index: 1000; backdrop-filter: blur(5px); pointer-events: none;
         }
-
-        .current-gesture {
-            text-align: center;
+        .status { top: 20px; left: 20px; color: #ffaa00; }
+        .ha-status { top: 20px; right: 20px; color: #ffaa00; }
+        .encoder-status { top: 60px; right: 20px; color: #ffaa00; }
+        .cooldown { bottom: 20px; left: 20px; color: #ffaa00; }
+        .toggle-btn {
+            position: fixed; bottom: 20px; right: 20px;
+            background: rgba(0,0,0,0.7); padding: 5px 10px;
+            border-radius: 20px; color: #fff; font-size: 10px;
+            cursor: pointer; z-index: 1000; backdrop-filter: blur(5px);
         }
-
-        .gesture-icon {
-            font-size: 64px;
-            filter: drop-shadow(0 2px 10px rgba(0,0,0,0.5));
-            transition: transform 0.2s ease;
+        .action-toast {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(0,255,0,0.9); color: #000; padding: 15px 30px;
+            border-radius: 50px; font-size: 24px; font-weight: bold;
+            z-index: 2000; animation: fadeOut 2s ease forwards; pointer-events: none;
+            white-space: nowrap; font-family: monospace;
         }
-
-        .gesture-icon.pulse {
-            animation: pulse 0.3s ease;
+        @keyframes fadeOut {
+            0% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+            70% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+            100% { opacity: 0; transform: translate(-50%, -50%) scale(1.2); }
         }
-
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.1); }
-        }
-
-        .gesture-name {
-            font-size: 20px;
-            font-weight: bold;
-            color: #0f0;
-            margin-top: 5px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-
-        .finger-count {
-            font-size: 14px;
-            color: #aaa;
-            margin-top: 5px;
-        }
-
-        .divider {
-            width: 100%;
-            height: 1px;
-            background: rgba(255,255,255,0.2);
-            margin: 5px 0;
-        }
-
-        .gesture-guide {
-            display: flex;
-            gap: 15px;
-            margin-top: 5px;
-            flex-wrap: wrap;
-            justify-content: center;
-        }
-
-        .guide-item {
-            text-align: center;
-        }
-
-        .guide-icon {
-            font-size: 28px;
-            filter: drop-shadow(0 2px 5px rgba(0,0,0,0.5));
-        }
-
-        .guide-text {
-            font-size: 10px;
-            color: #ccc;
-            margin-top: 3px;
-        }
-
-        .status {
-            position: fixed;
-            top: 20px;
-            left: 20px;
-            background: rgba(0,0,0,0.7);
-            padding: 8px 15px;
-            border-radius: 20px;
-            color: #ffaa00;
-            font-family: monospace;
-            font-size: 12px;
-            z-index: 1000;
-            backdrop-filter: blur(5px);
-            pointer-events: none;
-        }
-
-        .ha-status {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            background: rgba(0,0,0,0.7);
-            padding: 8px 15px;
-            border-radius: 20px;
-            color: #ffaa00;
-            font-family: monospace;
-            font-size: 12px;
-            z-index: 1000;
-            backdrop-filter: blur(5px);
-            pointer-events: none;
-        }
-
-        .encoder-status {
-            position: fixed;
-            top: 60px;
-            right: 20px;
-            background: rgba(0,0,0,0.7);
-            padding: 8px 15px;
-            border-radius: 20px;
-            color: #ffaa00;
-            font-family: monospace;
-            font-size: 12px;
-            z-index: 1000;
-            backdrop-filter: blur(5px);
-            pointer-events: none;
-        }
-
-        .cooldown {
-            position: fixed;
-            bottom: 20px;
-            left: 20px;
-            background: rgba(0,0,0,0.7);
-            padding: 8px 15px;
-            border-radius: 20px;
-            color: #ffaa00;
-            font-family: monospace;
-            font-size: 12px;
-            z-index: 1000;
-            backdrop-filter: blur(5px);
-        }
-
-        .video-format-toggle {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            background: rgba(0,0,0,0.7);
-            padding: 5px 10px;
-            border-radius: 20px;
-            color: #fff;
-            font-family: monospace;
-            font-size: 10px;
-            z-index: 1000;
-            cursor: pointer;
-            pointer-events: auto;
-            backdrop-filter: blur(5px);
-        }
-
-        .video-format-toggle:hover {
-            background: rgba(0,0,0,0.9);
-        }
-
         @media (max-width: 768px) {
-            .gesture-display {
-                padding: 10px 15px;
-                min-width: 160px;
-            }
-            .gesture-icon {
-                font-size: 48px;
-            }
-            .gesture-name {
-                font-size: 16px;
-            }
-            .guide-icon {
-                font-size: 22px;
-            }
-            .guide-text {
-                font-size: 9px;
-            }
+            .gesture-display { padding: 10px 15px; min-width: 160px; }
+            .gesture-icon { font-size: 48px; }
+            .gesture-name { font-size: 16px; }
+            .guide-icon { font-size: 22px; }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <!-- H.264 Video Element -->
         <video id="videoStream" autoplay muted playsinline></video>
-        <!-- Fallback MJPEG Image -->
-        <img id="mjpegStream" src="" alt="Camera Stream (Fallback)">
+        <img id="mjpegStream" style="display:none">
         
         <div class="gesture-display">
             <div class="current-gesture">
@@ -256,302 +76,169 @@
             </div>
             <div class="divider"></div>
             <div class="gesture-guide">
-                <div class="guide-item">
-                    <div class="guide-icon">✊</div>
-                    <div class="guide-text">Fist → Strip ON</div>
-                </div>
-                <div class="guide-item">
-                    <div class="guide-icon">✌️</div>
-                    <div class="guide-text">Peace → Row3 ON</div>
-                </div>
-                <div class="guide-item">
-                    <div class="guide-icon">👌</div>
-                    <div class="guide-text">Three → Row3 OFF</div>
-                </div>
-                <div class="guide-item">
-                    <div class="guide-icon">✋</div>
-                    <div class="guide-text">Palm → Strip OFF</div>
-                </div>
+                <div class="guide-item"><div class="guide-icon">✊</div><div class="guide-text">Fist → Strip ON</div></div>
+                <div class="guide-item"><div class="guide-icon">✌️</div><div class="guide-text">Peace → Row3 ON</div></div>
+                <div class="guide-item"><div class="guide-icon">👌</div><div class="guide-text">Three → Row3 OFF</div></div>
+                <div class="guide-item"><div class="guide-icon">✋</div><div class="guide-text">Palm → Strip OFF</div></div>
             </div>
         </div>
         
-        <div class="status" id="status">🟡 Connecting to camera...</div>
-        <div class="ha-status" id="haStatus">🔌 HA: Connecting...</div>
-        <div class="encoder-status" id="encoderStatus">🎬 H.264: Connecting...</div>
-        <div class="cooldown" id="cooldown">⏱️ Ready</div>
-        <div class="video-format-toggle" id="toggleFormat">🔄 Switch to MJPEG</div>
+        <div class="status" id="status">🟡 Connecting...</div>
+        <div class="ha-status" id="haStatus">🔌 HA: Connecting</div>
+        <div class="encoder-status" id="encoderStatus">🎬 H.264: Starting</div>
+        <div class="cooldown" id="cooldown">⚡ Ready</div>
+        <div class="toggle-btn" id="toggleBtn">🔄 Switch to MJPEG</div>
     </div>
 
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script>
-        const gestureIcon = document.getElementById('gestureIcon');
-        const gestureName = document.getElementById('gestureName');
-        const fingerCount = document.getElementById('fingerCount');
-        const statusEl = document.getElementById('status');
-        const haStatusEl = document.getElementById('haStatus');
-        const encoderStatusEl = document.getElementById('encoderStatus');
-        const cooldownEl = document.getElementById('cooldown');
-        const videoElement = document.getElementById('videoStream');
-        const mjpegElement = document.getElementById('mjpegStream');
-        const toggleBtn = document.getElementById('toggleFormat');
+        const elements = {
+            gestureIcon: document.getElementById('gestureIcon'),
+            gestureName: document.getElementById('gestureName'),
+            fingerCount: document.getElementById('fingerCount'),
+            status: document.getElementById('status'),
+            haStatus: document.getElementById('haStatus'),
+            encoderStatus: document.getElementById('encoderStatus'),
+            cooldown: document.getElementById('cooldown'),
+            video: document.getElementById('videoStream'),
+            mjpeg: document.getElementById('mjpegStream'),
+            toggleBtn: document.getElementById('toggleBtn')
+        };
         
-        let socket = null;
-        let lastGesture = null;
         let useH264 = true;
+        let socket = null;
         
-        // Initialize video stream
-        function initVideoStream() {
-            if (useH264) {
-                videoElement.style.display = 'block';
-                mjpegElement.style.display = 'none';
-                toggleBtn.textContent = '🔄 Switch to MJPEG';
-                
-                // Create MediaSource for H.264
-                const mediaSource = new MediaSource();
-                videoElement.src = URL.createObjectURL(mediaSource);
-                
-                let sourceBuffer = null;
-                let videoQueue = [];
-                let isUpdating = false;
-                
-                mediaSource.addEventListener('sourceopen', () => {
-                    try {
-                        sourceBuffer = mediaSource.addSourceBuffer('video/mp4; codecs="avc1.42E01E"');
-                        sourceBuffer.mode = 'sequence';
-                        
-                        sourceBuffer.addEventListener('updateend', () => {
-                            isUpdating = false;
-                            if (videoQueue.length > 0) {
-                                appendToBuffer(videoQueue.shift());
-                            }
-                        });
-                        
-                        // Fetch H.264 stream
-                        fetchVideoStream();
-                    } catch (e) {
-                        console.error('MediaSource error:', e);
-                        fallbackToMJPEG();
-                    }
-                });
-                
-                function appendToBuffer(data) {
-                    if (!sourceBuffer || isUpdating) {
-                        videoQueue.push(data);
-                        return;
-                    }
-                    try {
-                        isUpdating = true;
-                        sourceBuffer.appendBuffer(data);
-                    } catch (e) {
-                        console.error('Append error:', e);
-                        fallbackToMJPEG();
-                    }
-                }
-                
-                async function fetchVideoStream() {
-                    try {
-                        const response = await fetch('/video');
-                        const reader = response.body.getReader();
-                        
-                        while (true) {
-                            const { done, value } = await reader.read();
-                            if (done) break;
-                            if (sourceBuffer && mediaSource.readyState === 'open') {
-                                appendToBuffer(value);
-                            }
-                        }
-                    } catch (e) {
-                        console.error('H.264 stream error:', e);
-                        fallbackToMJPEG();
-                    }
-                }
-            } else {
-                videoElement.style.display = 'none';
-                mjpegElement.style.display = 'block';
-                mjpegElement.src = '/mjpeg?_=' + Date.now();
-                toggleBtn.textContent = '🔄 Switch to H.264';
+        function showToast(msg) {
+            const toast = document.createElement('div');
+            toast.className = 'action-toast';
+            toast.textContent = `🎯 ${msg}`;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2000);
+        }
+        
+        function initH264Stream() {
+            elements.video.style.display = 'block';
+            elements.mjpeg.style.display = 'none';
+            elements.toggleBtn.textContent = '🔄 Switch to MJPEG';
+            
+            const mediaSource = new MediaSource();
+            elements.video.src = URL.createObjectURL(mediaSource);
+            let sourceBuffer = null;
+            let queue = [];
+            let updating = false;
+            
+            mediaSource.addEventListener('sourceopen', () => {
+                try {
+                    sourceBuffer = mediaSource.addSourceBuffer('video/mp4; codecs="avc1.42E01E"');
+                    sourceBuffer.mode = 'sequence';
+                    sourceBuffer.addEventListener('updateend', () => {
+                        updating = false;
+                        if (queue.length) appendToBuffer(queue.shift());
+                    });
+                    fetchStream();
+                } catch(e) { fallbackToMJPEG(); }
+            });
+            
+            function appendToBuffer(data) {
+                if (!sourceBuffer || updating) { queue.push(data); return; }
+                try { updating = true; sourceBuffer.appendBuffer(data); }
+                catch(e) { fallbackToMJPEG(); }
             }
+            
+            async function fetchStream() {
+                try {
+                    const response = await fetch('/video');
+                    const reader = response.body.getReader();
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        if (sourceBuffer && mediaSource.readyState === 'open')
+                            appendToBuffer(value);
+                    }
+                } catch(e) { fallbackToMJPEG(); }
+            }
+        }
+        
+        function initMJPEGStream() {
+            elements.video.style.display = 'none';
+            elements.mjpeg.style.display = 'block';
+            elements.mjpeg.src = '/mjpeg?_=' + Date.now();
+            elements.toggleBtn.textContent = '🔄 Switch to H.264';
+            
+            elements.mjpeg.onerror = () => {
+                elements.status.innerHTML = '❌ Stream error - reconnecting...';
+                setTimeout(() => { elements.mjpeg.src = '/mjpeg?_=' + Date.now(); }, 3000);
+            };
+            elements.mjpeg.onload = () => {
+                elements.status.innerHTML = '✅ Camera active - Show your hand!';
+                elements.status.style.color = '#0f0';
+            };
         }
         
         function fallbackToMJPEG() {
             if (useH264) {
-                console.log('Falling back to MJPEG stream');
                 useH264 = false;
-                initVideoStream();
+                initMJPEGStream();
             }
         }
         
-        // Reload video stream if it fails
-        mjpegElement.onerror = () => {
-            statusEl.innerHTML = '❌ Camera stream error - reconnecting...';
-            statusEl.style.color = '#f00';
-            setTimeout(() => {
-                mjpegElement.src = '/mjpeg?_=' + Date.now();
-            }, 3000);
-        };
-        
-        mjpegElement.onload = () => {
-            statusEl.innerHTML = '✅ Camera active (MJPEG) - Show your hand!';
-            statusEl.style.color = '#0f0';
-        };
-        
-        videoElement.onerror = () => {
-            fallbackToMJPEG();
-        };
-        
-        // Toggle video format
-        toggleBtn.addEventListener('click', () => {
+        elements.toggleBtn.addEventListener('click', () => {
             useH264 = !useH264;
-            initVideoStream();
+            if (useH264) initH264Stream();
+            else initMJPEGStream();
         });
         
-        // WebSocket connection for gesture data
         function connectWebSocket() {
-            socket = io(window.location.origin, {
-                transports: ['websocket', 'polling'],
-                reconnection: true,
-                reconnectionAttempts: 10
-            });
-            
+            socket = io({ transports: ['websocket'], reconnection: true });
             socket.on('connect', () => {
-                console.log('✅ WebSocket connected');
-                haStatusEl.innerHTML = '✅ HA: Connected';
-                haStatusEl.style.color = '#0f0';
+                elements.haStatus.innerHTML = '✅ HA: Connected';
+                elements.haStatus.style.color = '#0f0';
             });
-            
             socket.on('disconnect', () => {
-                console.log('❌ WebSocket disconnected');
-                haStatusEl.innerHTML = '🔌 HA: Reconnecting...';
-                haStatusEl.style.color = '#ffaa00';
+                elements.haStatus.innerHTML = '🔌 HA: Reconnecting';
+                elements.haStatus.style.color = '#ffaa00';
             });
-            
             socket.on('gesture_update', (data) => {
-                // Update UI with gesture data
-                if (data.gestureIcon !== gestureIcon.textContent) {
-                    gestureIcon.classList.add('pulse');
-                    setTimeout(() => gestureIcon.classList.remove('pulse'), 200);
+                if (data.gestureIcon !== elements.gestureIcon.textContent) {
+                    elements.gestureIcon.classList.add('pulse');
+                    setTimeout(() => elements.gestureIcon.classList.remove('pulse'), 200);
                 }
+                elements.gestureIcon.textContent = data.gestureIcon;
+                elements.gestureName.textContent = data.gestureName;
+                elements.fingerCount.textContent = `Fingers: ${data.fingerCount}`;
+                elements.status.innerHTML = data.status === 'detecting' ? '🟢 Detecting hand' : '🟡 No hand detected';
+                elements.status.style.color = data.status === 'detecting' ? '#0f0' : '#ffaa00';
+                elements.encoderStatus.innerHTML = data.encoderActive ? '🎬 H.264: Active' : '🎬 H.264: Inactive';
+                elements.encoderStatus.style.color = data.encoderActive ? '#0f0' : '#f00';
                 
-                gestureIcon.textContent = data.gestureIcon;
-                gestureName.textContent = data.gestureName;
-                fingerCount.textContent = `Fingers: ${data.fingerCount}`;
-                
-                // Update status
-                if (data.status === 'detecting') {
-                    statusEl.innerHTML = '🟢 Detecting hand';
-                    statusEl.style.color = '#0f0';
-                } else {
-                    statusEl.innerHTML = '🟡 No hand detected';
-                    statusEl.style.color = '#ffaa00';
-                }
-                
-                // Update encoder status
-                if (data.encoderActive) {
-                    encoderStatusEl.innerHTML = '🎬 H.264: Active';
-                    encoderStatusEl.style.color = '#0f0';
-                } else {
-                    encoderStatusEl.innerHTML = '🎬 H.264: Inactive';
-                    encoderStatusEl.style.color = '#f00';
-                }
-                
-                // Update cooldown
                 if (data.cooldownRemaining > 0) {
-                    cooldownEl.innerHTML = `⏱️ Cooldown: ${data.cooldownRemaining.toFixed(1)}s`;
-                    cooldownEl.style.color = '#ffaa00';
+                    elements.cooldown.innerHTML = `⏱️ Cooldown: ${data.cooldownRemaining.toFixed(1)}s`;
+                    elements.cooldown.style.color = '#ffaa00';
                 } else {
-                    cooldownEl.innerHTML = '⚡ Ready';
-                    cooldownEl.style.color = '#0f0';
+                    elements.cooldown.innerHTML = '⚡ Ready';
+                    elements.cooldown.style.color = '#0f0';
                 }
                 
-                // Show last action if any
-                if (data.lastAction && data.lastAction !== '') {
-                    showActionToast(data.lastAction);
-                }
+                if (data.lastAction) showToast(data.lastAction);
             });
-            
             socket.on('action_triggered', (data) => {
-                console.log('Action triggered:', data);
-                // Flash the gesture display
-                gestureIcon.style.transform = 'scale(1.2)';
-                setTimeout(() => {
-                    gestureIcon.style.transform = 'scale(1)';
-                }, 200);
+                elements.gestureIcon.style.transform = 'scale(1.2)';
+                setTimeout(() => elements.gestureIcon.style.transform = 'scale(1)', 200);
             });
         }
-        
-        function showActionToast(action) {
-            const actionMsg = document.createElement('div');
-            actionMsg.className = 'action-toast';
-            actionMsg.textContent = `🎯 ${action}`;
-            document.body.appendChild(actionMsg);
-            setTimeout(() => actionMsg.remove(), 2000);
-        }
-        
-        // Add CSS for action toast
-        const style = document.createElement('style');
-        style.textContent = `
-            .action-toast {
-                position: fixed;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-                background: rgba(0, 255, 0, 0.9);
-                color: #000;
-                padding: 15px 30px;
-                border-radius: 50px;
-                font-size: 24px;
-                font-weight: bold;
-                z-index: 2000;
-                animation: fadeOut 2s ease forwards;
-                pointer-events: none;
-                white-space: nowrap;
-                font-family: monospace;
-            }
-            
-            @keyframes fadeOut {
-                0% {
-                    opacity: 1;
-                    transform: translate(-50%, -50%) scale(1);
-                }
-                70% {
-                    opacity: 1;
-                    transform: translate(-50%, -50%) scale(1.1);
-                }
-                100% {
-                    opacity: 0;
-                    transform: translate(-50%, -50%) scale(1.2);
-                }
-            }
-        `;
-        document.head.appendChild(style);
         
         // Initialize
+        initH264Stream();
         connectWebSocket();
-        initVideoStream();
         
-        // Health check every 10 seconds
         setInterval(async () => {
             try {
-                const response = await fetch('/health');
-                const data = await response.json();
-                if (!data.camera_active) {
-                    statusEl.innerHTML = '⚠️ Camera inactive - reconnecting...';
-                    statusEl.style.color = '#ffaa00';
-                }
-                if (!data.ha_connected) {
-                    haStatusEl.innerHTML = '🔌 HA: Disconnected';
-                    haStatusEl.style.color = '#f00';
-                }
-                if (data.video_format === 'h264') {
-                    encoderStatusEl.innerHTML = '🎬 H.264: Active';
-                    encoderStatusEl.style.color = '#0f0';
-                }
-            } catch (e) {
-                console.error('Health check failed:', e);
-            }
+                const res = await fetch('/health');
+                const data = await res.json();
+                if (!data.camera_active) elements.status.innerHTML = '⚠️ Camera inactive';
+                if (!data.ha_connected) elements.haStatus.innerHTML = '🔌 HA: Disconnected';
+            } catch(e) {}
         }, 10000);
-        
-        console.log('Frontend ready - using H.264 video stream');
     </script>
 </body>
 </html>

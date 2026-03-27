@@ -1,12 +1,13 @@
 {
-  "name": "Gesture Control with RTSP",
-  "version": "2.0.0",
+  "name": "Gesture Control with RTSP and H.264",
+  "version": "2.1.0",
   "slug": "gesture_control_rtsp",
-  "description": "Control Home Assistant lights with hand gestures via RTSP camera with live video feed",
+  "description": "Control Home Assistant lights with hand gestures via RTSP camera with H.264 live video stream",
   "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
   "startup": "application",
   "boot": "auto",
   "host_network": true,
+  "privileged": ["SYS_ADMIN"],
   "options": {
     "rtsp_url": "",
     "ha_url": "ws://homeassistant.local:8123/api/websocket",
@@ -18,7 +19,9 @@
     "tracking_confidence": 0.5,
     "frame_width": 640,
     "frame_height": 480,
-    "fps": 15
+    "fps": 15,
+    "video_bitrate": 1000,
+    "use_hardware_accel": false
   },
   "schema": {
     "rtsp_url": "str",
@@ -31,7 +34,9 @@
     "tracking_confidence": "float(0.3,0.9)",
     "frame_width": "int(320,1280)",
     "frame_height": "int(240,720)",
-    "fps": "int(5,30)"
+    "fps": "int(5,30)",
+    "video_bitrate": "int(500,5000)",
+    "use_hardware_accel": "bool"
   },
   "panel_icon": "mdi:hand-wave",
   "ingress": true,
@@ -40,6 +45,6 @@
     "8099/tcp": 8099
   },
   "ports_description": {
-    "8099/tcp": "Web UI with Video Stream"
+    "8099/tcp": "Web UI with H.264 Video Stream"
   }
 }
