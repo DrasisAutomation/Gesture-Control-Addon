@@ -86,15 +86,12 @@ def init_mediapipe():
         max_num_hands=1,
         min_detection_confidence=config["detection_confidence"],
         min_tracking_confidence=config["tracking_confidence"],
-        model_complexity=0  # Use simpler model for better performance
+        model_complexity=0
     )
     logger.info("✅ MediaPipe initialized")
 
 def count_extended_fingers(landmarks, image_width, image_height):
-    """
-    Count number of extended fingers from hand landmarks
-    Returns count 0-5
-    """
+    """Count number of extended fingers from hand landmarks"""
     if not landmarks:
         return 0
     
@@ -169,17 +166,32 @@ class HAClient:
             if self.session and not self.session.closed:
                 await self.session.close()
             
+            logger.info(f"🔌 Connecting to HA at {self.url}")
+            
             self.session = aiohttp.ClientSession()
             self.ws = await self.session.ws_connect(self.url)
             
+            # Wait for auth_required message first
+            msg = await self.ws.receive_json()
+            logger.info(f"📨 HA initial message: {msg.get('type')}")
+            
+            if msg.get("type") != "auth_required":
+                logger.error(f"❌ Expected auth_required, got: {msg}")
+                self.connected = False
+                return False
+            
             # Send auth
-            await self.ws.send_json({
+            auth_msg = {
                 "type": "auth",
                 "access_token": self.token
-            })
+            }
+            logger.info("🔐 Sending authentication...")
+            await self.ws.send_json(auth_msg)
             
             # Wait for auth response
             msg = await self.ws.receive_json()
+            logger.info(f"📨 HA auth response: {msg.get('type')}")
+            
             if msg.get("type") == "auth_ok":
                 self.connected = True
                 logger.info("✅ HA WebSocket connected and authenticated")
@@ -187,12 +199,14 @@ class HAClient:
             elif msg.get("type") == "auth_invalid":
                 logger.error(f"❌ HA auth invalid: {msg.get('message', 'Invalid token')}")
                 logger.error("Please check your HA token in add-on configuration")
+                logger.error(f"Token (first 20 chars): {self.token[:20]}...")
                 self.connected = False
                 return False
             else:
                 logger.error(f"❌ HA auth failed: {msg}")
                 self.connected = False
                 return False
+                
         except Exception as e:
             logger.error(f"❌ HA connection error: {e}")
             self.connected = False
@@ -206,13 +220,14 @@ class HAClient:
         
         try:
             msg_id = int(time.time() * 1000)
-            await self.ws.send_json({
+            call_msg = {
                 "id": msg_id,
                 "type": "call_service",
                 "domain": domain,
                 "service": service,
                 "service_data": {"entity_id": entity}
-            })
+            }
+            await self.ws.send_json(call_msg)
             logger.info(f"⚡ HA call: {service} {entity}")
             self.last_action = f"{service} {entity.split('.')[-1]}"
             return True
@@ -224,7 +239,7 @@ class HAClient:
     async def handle_gesture(self, finger_count):
         """Handle gesture and trigger HA actions with cooldown"""
         if not self.connected:
-            logger.debug("Not connected to HA, ignoring gesture")
+            logger.debug(f"⚠️ Not connected to HA, ignoring gesture: {finger_count} fingers")
             return False
             
         now = time.time()
@@ -232,6 +247,7 @@ class HAClient:
         # Cooldown check
         if (self.last_gesture == finger_count and 
             now - self.last_trigger_time < self.cooldown_seconds):
+            logger.debug(f"⏱️ Cooldown active for gesture: {finger_count}")
             return False
         
         action = None
@@ -239,12 +255,16 @@ class HAClient:
         # Map finger count to action
         if finger_count == 0:
             action = ("light", "turn_on", self.strip_entity)
+            logger.info(f"🎮 Fist detected! Turning ON {self.strip_entity}")
         elif finger_count == 5:
             action = ("light", "turn_off", self.strip_entity)
+            logger.info(f"🎮 Palm detected! Turning OFF {self.strip_entity}")
         elif finger_count == 2:
             action = ("light", "turn_on", self.row_entity)
+            logger.info(f"🎮 2 Fingers detected! Turning ON {self.row_entity}")
         elif finger_count == 3:
             action = ("light", "turn_off", self.row_entity)
+            logger.info(f"🎮 3 Fingers detected! Turning OFF {self.row_entity}")
         
         if action:
             self.last_gesture = finger_count
@@ -364,7 +384,7 @@ class GestureProcessor:
                 # Debug every 100 frames
                 if self.frame_count % 100 == 0:
                     fps = self.frame_count / (time.time() - self.last_debug_time)
-                    logger.info(f"📊 Stats: {self.frame_count} frames, {self.detection_count} detections, {fps:.1f} FPS")
+                    logger.info(f"📊 Stats: {self.frame_count} frames, {self.detection_count} detections, {fps:.1f} FPS, HA: {'✓' if self.ha_client.connected else '✗'}")
                     self.last_debug_time = time.time()
                     self.frame_count = 0
                     self.detection_count = 0
@@ -568,6 +588,7 @@ class GestureServer:
         return aiohttp.web.json_response({
             "status": "ok",
             "ha_connected": self.ha_client.connected if self.ha_client else False,
+            "ha_url": self.ha_client.url if self.ha_client else None,
             "gesture_running": self.gesture_processor.running if self.gesture_processor else False,
             "current_gesture": self.gesture_processor.current_finger_count if self.gesture_processor else 0,
             "hand_detected": self.gesture_processor.hand_detected if self.gesture_processor else False,
@@ -589,6 +610,8 @@ class GestureServer:
         logger.info(f"🎯 Tracking Confidence: {config['tracking_confidence']}")
         logger.info(f"📐 Resolution: {config['frame_width']}x{config['frame_height']}")
         logger.info(f"⚡ Target FPS: {config['fps']}")
+        logger.info(f"🔌 HA URL: {config['ha_url']}")
+        logger.info(f"🔑 HA Token: {config['ha_token'][:20]}..." if config['ha_token'] else "⚠️ No token set")
         logger.info("=" * 60)
         
         # Initialize HA client
@@ -602,7 +625,9 @@ class GestureServer:
         self.ha_client.set_loop(asyncio.get_event_loop())
         
         # Connect to HA
-        await self.ha_client.connect()
+        connected = await self.ha_client.connect()
+        if not connected:
+            logger.error("❌ Failed to connect to HA! Check your token and URL")
         
         # Start gesture processor in background thread
         self.gesture_processor = GestureProcessor(self.ha_client, self.sio)
