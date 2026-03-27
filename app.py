@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Gesture Control Add-on for Home Assistant
-Single-file implementation with RTSP streaming and gesture detection
-Supports any toggle entity (lights, switches, etc.)
+Supports 5 entities with 1-5 finger gestures
 """
 
 import asyncio
@@ -40,38 +39,20 @@ def load_config():
             "ha_url": "ws://homeassistant.local:8123/api/websocket",
             "ha_token": "",
             "gesture_mappings": [
-                {
-                    "finger_count": 0,
-                    "entity_id": "light.strip_light",
-                    "action": "toggle",
-                    "name": "Strip Light"
-                },
-                {
-                    "finger_count": 2,
-                    "entity_id": "light.row_light",
-                    "action": "toggle",
-                    "name": "Row Light"
-                },
-                {
-                    "finger_count": 3,
-                    "entity_id": "switch.fan",
-                    "action": "toggle",
-                    "name": "Fan"
-                },
-                {
-                    "finger_count": 5,
-                    "entity_id": "switch.plug",
-                    "action": "toggle",
-                    "name": "Plug"
-                }
+                {"finger_count": 1, "entity_id": "light.entity_1", "name": "Entity 1"},
+                {"finger_count": 2, "entity_id": "light.entity_2", "name": "Entity 2"},
+                {"finger_count": 3, "entity_id": "light.entity_3", "name": "Entity 3"},
+                {"finger_count": 4, "entity_id": "light.entity_4", "name": "Entity 4"},
+                {"finger_count": 5, "entity_id": "light.entity_5", "name": "Entity 5"}
             ],
+            "reset_gesture": 0,  # Fist resets tracking
             "fps": 15,
             "frame_width": 640,
             "frame_height": 480,
-            "bitrate": "500k",
-            "cooldown_seconds": 2,
-            "detection_confidence": 0.5,
-            "tracking_confidence": 0.5,
+            "cooldown_seconds": 1.5,
+            "detection_confidence": 0.6,
+            "tracking_confidence": 0.6,
+            "hand_stability_frames": 3  # Frames needed for stable gesture
         }
     
     # Ensure all keys exist
@@ -79,44 +60,15 @@ def load_config():
         "fps": 15,
         "frame_width": 640,
         "frame_height": 480,
-        "bitrate": "500k",
-        "cooldown_seconds": 2,
-        "detection_confidence": 0.5,
-        "tracking_confidence": 0.5,
+        "cooldown_seconds": 1.5,
+        "detection_confidence": 0.6,
+        "tracking_confidence": 0.6,
+        "hand_stability_frames": 3,
+        "reset_gesture": 0
     }
     for key, value in defaults.items():
         if key not in config:
             config[key] = value
-    
-    # Backward compatibility for old config format
-    if "strip_light_entity" in config and "row_light_entity" in config:
-        if "gesture_mappings" not in config or not config["gesture_mappings"]:
-            config["gesture_mappings"] = [
-                {
-                    "finger_count": 0,
-                    "entity_id": config["strip_light_entity"],
-                    "action": "toggle",
-                    "name": "Strip Light"
-                },
-                {
-                    "finger_count": 5,
-                    "entity_id": config["strip_light_entity"],
-                    "action": "toggle",
-                    "name": "Strip Light"
-                },
-                {
-                    "finger_count": 2,
-                    "entity_id": config["row_light_entity"],
-                    "action": "toggle",
-                    "name": "Row Light"
-                },
-                {
-                    "finger_count": 3,
-                    "entity_id": config["row_light_entity"],
-                    "action": "toggle",
-                    "name": "Row Light"
-                }
-            ]
     
     return config
 
@@ -131,6 +83,7 @@ config = load_config()
 
 # ========== GESTURE DETECTION ==========
 mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
 hands = None
 
 def init_mediapipe():
@@ -141,100 +94,81 @@ def init_mediapipe():
         max_num_hands=1,
         min_detection_confidence=config["detection_confidence"],
         min_tracking_confidence=config["tracking_confidence"],
-        model_complexity=0
+        model_complexity=0  # Use 0 for better performance
     )
     logger.info("✅ MediaPipe initialized")
 
 def count_extended_fingers(landmarks, image_width, image_height):
-    """Count number of extended fingers from hand landmarks"""
+    """
+    Improved finger counting with better thumb detection
+    Returns number of extended fingers (1-5)
+    """
     if not landmarks:
         return 0
     
+    # Get fingertip and pip joint coordinates
+    fingertips = [4, 8, 12, 16, 20]  # Thumb, Index, Middle, Ring, Pinky
+    finger_pips = [3, 6, 10, 14, 18]  # Corresponding PIP joints
+    
     count = 0
     
-    # Index finger (tip 8 vs pip 6)
-    if landmarks[8].y < landmarks[6].y - 0.03:
-        count += 1
-    
-    # Middle finger (tip 12 vs pip 10)
-    if landmarks[12].y < landmarks[10].y - 0.03:
-        count += 1
-    
-    # Ring finger (tip 16 vs pip 14)
-    if landmarks[16].y < landmarks[14].y - 0.02:
-        count += 1
-    
-    # Pinky (tip 20 vs pip 18)
-    if landmarks[20].y < landmarks[18].y - 0.02:
-        count += 1
-    
-    # Thumb based on hand orientation
-    is_right_hand = landmarks[5].x < landmarks[17].x
-    if is_right_hand:
-        if landmarks[4].x < landmarks[3].x - 0.02:
+    # For fingers (index, middle, ring, pinky)
+    for i in range(1, 5):  # Skip thumb
+        tip_y = landmarks[fingertips[i]].y
+        pip_y = landmarks[finger_pips[i]].y
+        
+        # Finger is extended if tip is above PIP (y is smaller)
+        if tip_y < pip_y - 0.02:
             count += 1
-    else:
-        if landmarks[4].x > landmarks[3].x + 0.02:
+    
+    # Thumb detection (based on x-coordinate and orientation)
+    thumb_tip = landmarks[4]
+    thumb_ip = landmarks[3]
+    hand_orientation = landmarks[5].x  # Reference point
+    
+    # Check if thumb is extended
+    if hand_orientation < 0.5:  # Right hand orientation
+        if thumb_tip.x > thumb_ip.x + 0.03:
+            count += 1
+    else:  # Left hand orientation
+        if thumb_tip.x < thumb_ip.x - 0.03:
             count += 1
     
     return count
 
-def get_gesture_info(finger_count, gesture_mappings):
-    """Return gesture name, icon, and mapped actions for finger count"""
-    # Default mapping for display
-    default_mapping = {
-        0: {"name": "Fist", "icon": "✊"},
-        1: {"name": "1 Finger", "icon": "☝️"},
-        2: {"name": "2 Fingers", "icon": "✌️"},
-        3: {"name": "3 Fingers", "icon": "👌"},
-        4: {"name": "4 Fingers", "icon": "🖖"},
-        5: {"name": "Palm", "icon": "✋"}
+def get_gesture_info(finger_count):
+    """Return gesture name and icon for finger count"""
+    mapping = {
+        0: {"name": "Reset/Fist", "icon": "✊", "description": "Reset tracking"},
+        1: {"name": "1 Finger", "icon": "☝️", "description": "Toggle Entity 1"},
+        2: {"name": "2 Fingers", "icon": "✌️", "description": "Toggle Entity 2"},
+        3: {"name": "3 Fingers", "icon": "👌", "description": "Toggle Entity 3"},
+        4: {"name": "4 Fingers", "icon": "🖖", "description": "Toggle Entity 4"},
+        5: {"name": "5 Fingers/Palm", "icon": "✋", "description": "Toggle Entity 5"}
     }
-    
-    # Find if this finger count has any mapped actions
-    mapped_actions = []
-    for mapping in gesture_mappings:
-        if mapping["finger_count"] == finger_count:
-            mapped_actions.append({
-                "entity_id": mapping["entity_id"],
-                "action": mapping.get("action", "toggle"),
-                "name": mapping.get("name", mapping["entity_id"].split(".")[-1])
-            })
-    
-    if finger_count in default_mapping:
-        gesture_name = default_mapping[finger_count]["name"]
-        gesture_icon = default_mapping[finger_count]["icon"]
-    else:
-        gesture_name = f"{finger_count} Fingers"
-        gesture_icon = "🖐️"
-    
-    return {
-        "name": gesture_name, 
-        "icon": gesture_icon,
-        "actions": mapped_actions
-    }
+    return mapping.get(finger_count, {"name": f"{finger_count} Fingers", "icon": "🖐️", "description": "Unknown"})
 
 # ========== HOME ASSISTANT WEBSOCKET ==========
 class HAClient:
     """Home Assistant WebSocket Client"""
     
-    def __init__(self, url, token, gesture_mappings, cooldown_seconds):
+    def __init__(self, url, token, gesture_mappings, cooldown_seconds, reset_gesture=0):
         self.url = url
         self.token = token
-        self.gesture_mappings = gesture_mappings
+        self.gesture_mappings = {m["finger_count"]: m for m in gesture_mappings}
         self.cooldown_seconds = cooldown_seconds
+        self.reset_gesture = reset_gesture
         
         self.ws = None
         self.session = None
         self.connected = False
-        self.last_gesture = None
         self.last_trigger_time = {}
         self.last_action = ""
         self.loop = None
-        self.reconnect_task = None
         
-        # Track entity states to avoid redundant toggles
-        self.entity_states = {}
+        # Track last triggered gesture to prevent rapid toggles
+        self.last_triggered_gesture = None
+        self.last_trigger_timestamp = 0
         
     def set_loop(self, loop):
         self.loop = loop
@@ -242,7 +176,6 @@ class HAClient:
     async def connect(self):
         """Connect to Home Assistant WebSocket"""
         try:
-            # Close existing session if any
             if self.session and not self.session.closed:
                 await self.session.close()
             
@@ -251,40 +184,21 @@ class HAClient:
             self.session = aiohttp.ClientSession()
             self.ws = await self.session.ws_connect(self.url)
             
-            # Wait for auth_required message first
             msg = await self.ws.receive_json()
-            logger.info(f"📨 HA initial message: {msg.get('type')}")
-            
             if msg.get("type") != "auth_required":
                 logger.error(f"❌ Expected auth_required, got: {msg}")
                 self.connected = False
                 return False
             
-            # Send auth
-            auth_msg = {
-                "type": "auth",
-                "access_token": self.token
-            }
-            logger.info("🔐 Sending authentication...")
+            auth_msg = {"type": "auth", "access_token": self.token}
             await self.ws.send_json(auth_msg)
             
-            # Wait for auth response
             msg = await self.ws.receive_json()
-            logger.info(f"📨 HA auth response: {msg.get('type')}")
             
             if msg.get("type") == "auth_ok":
                 self.connected = True
                 logger.info("✅ HA WebSocket connected and authenticated")
-                
-                # Subscribe to state changes for all entities
-                await self.subscribe_to_entities()
                 return True
-            elif msg.get("type") == "auth_invalid":
-                logger.error(f"❌ HA auth invalid: {msg.get('message', 'Invalid token')}")
-                logger.error("Please check your HA token in add-on configuration")
-                logger.error(f"Token (first 20 chars): {self.token[:20]}...")
-                self.connected = False
-                return False
             else:
                 logger.error(f"❌ HA auth failed: {msg}")
                 self.connected = False
@@ -295,150 +209,68 @@ class HAClient:
             self.connected = False
             return False
     
-    async def subscribe_to_entities(self):
-        """Subscribe to state changes for all mapped entities"""
+    async def toggle_entity(self, entity_id):
+        """Toggle an entity (works for lights, switches, etc.)"""
         if not self.connected or not self.ws:
-            return
-        
-        # Get unique entity IDs from mappings
-        entity_ids = set()
-        for mapping in self.gesture_mappings:
-            entity_ids.add(mapping["entity_id"])
-        
-        # Subscribe to each entity
-        for entity_id in entity_ids:
-            try:
-                sub_msg = {
-                    "id": int(time.time() * 1000),
-                    "type": "subscribe_events",
-                    "event_type": "state_changed",
-                    "entity_id": entity_id
-                }
-                await self.ws.send_json(sub_msg)
-                logger.info(f"📡 Subscribed to {entity_id} state changes")
-                
-                # Also get initial state
-                await self.get_entity_state(entity_id)
-            except Exception as e:
-                logger.error(f"❌ Failed to subscribe to {entity_id}: {e}")
-    
-    async def get_entity_state(self, entity_id):
-        """Get current state of an entity"""
-        if not self.connected or not self.ws:
-            return None
-        
-        try:
-            msg_id = int(time.time() * 1000)
-            state_msg = {
-                "id": msg_id,
-                "type": "get_states"
-            }
-            await self.ws.send_json(state_msg)
-            
-            # Wait for response (simplified - in production you'd match by ID)
-            # For now, we'll handle in the main receive loop
-            return None
-        except Exception as e:
-            logger.error(f"❌ Failed to get state for {entity_id}: {e}")
-            return None
-    
-    async def call_service(self, domain, service, entity):
-        """Call a service on Home Assistant"""
-        if not self.connected or not self.ws:
-            logger.warning("⚠️ Not connected to HA, cannot call service")
+            logger.warning("⚠️ Not connected to HA, cannot toggle entity")
             return False
         
         try:
+            domain = entity_id.split('.')[0]
             msg_id = int(time.time() * 1000)
             call_msg = {
                 "id": msg_id,
                 "type": "call_service",
                 "domain": domain,
-                "service": service,
-                "service_data": {"entity_id": entity}
+                "service": "toggle",
+                "service_data": {"entity_id": entity_id}
             }
             await self.ws.send_json(call_msg)
-            logger.info(f"⚡ HA call: {service} {entity}")
-            self.last_action = f"{service} {entity.split('.')[-1]}"
+            logger.info(f"⚡ Toggled {entity_id}")
+            self.last_action = f"Toggle {entity_id.split('.')[-1]}"
             return True
         except Exception as e:
-            logger.error(f"❌ Failed to call service: {e}")
+            logger.error(f"❌ Failed to toggle entity: {e}")
             self.connected = False
             return False
     
-    def get_domain_from_entity(self, entity_id):
-        """Extract domain from entity_id (e.g., 'light.bedroom' -> 'light')"""
-        return entity_id.split('.')[0] if '.' in entity_id else 'light'
-    
     async def handle_gesture(self, finger_count):
-        """Handle gesture and trigger HA actions with cooldown"""
+        """Handle gesture and trigger HA actions"""
         if not self.connected:
-            logger.debug(f"⚠️ Not connected to HA, ignoring gesture: {finger_count} fingers")
+            logger.debug(f"⚠️ Not connected to HA, ignoring gesture: {finger_count}")
             return False
-            
+        
         now = time.time()
         
-        # Find all mappings for this finger count
-        actions_triggered = False
-        for mapping in self.gesture_mappings:
-            if mapping["finger_count"] == finger_count:
-                entity_id = mapping["entity_id"]
-                action = mapping.get("action", "toggle")
-                
-                # Cooldown check per entity
-                last_trigger = self.last_trigger_time.get(entity_id, 0)
-                if now - last_trigger < self.cooldown_seconds:
-                    logger.debug(f"⏱️ Cooldown active for {entity_id}")
-                    continue
-                
-                # Determine domain and service based on entity type and action
-                domain = self.get_domain_from_entity(entity_id)
-                
-                if action == "toggle":
-                    # Toggle entity (works for lights, switches, covers, etc.)
-                    service = "toggle"
-                    logger.info(f"🎮 Toggling {entity_id} (finger count: {finger_count})")
-                    await self.call_service(domain, service, entity_id)
-                    self.last_trigger_time[entity_id] = now
-                    actions_triggered = True
-                    
-                elif action == "on":
-                    service = "turn_on"
-                    logger.info(f"🎮 Turning ON {entity_id} (finger count: {finger_count})")
-                    await self.call_service(domain, service, entity_id)
-                    self.last_trigger_time[entity_id] = now
-                    actions_triggered = True
-                    
-                elif action == "off":
-                    service = "turn_off"
-                    logger.info(f"🎮 Turning OFF {entity_id} (finger count: {finger_count})")
-                    await self.call_service(domain, service, entity_id)
-                    self.last_trigger_time[entity_id] = now
-                    actions_triggered = True
-                    
-                elif action == "open":
-                    service = "open_cover"
-                    logger.info(f"🎮 Opening {entity_id} (finger count: {finger_count})")
-                    await self.call_service(domain, service, entity_id)
-                    self.last_trigger_time[entity_id] = now
-                    actions_triggered = True
-                    
-                elif action == "close":
-                    service = "close_cover"
-                    logger.info(f"🎮 Closing {entity_id} (finger count: {finger_count})")
-                    await self.call_service(domain, service, entity_id)
-                    self.last_trigger_time[entity_id] = now
-                    actions_triggered = True
-                    
-                else:
-                    # Custom service
-                    logger.info(f"🎮 Executing {action} on {entity_id} (finger count: {finger_count})")
-                    await self.call_service(domain, action, entity_id)
-                    self.last_trigger_time[entity_id] = now
-                    actions_triggered = True
+        # Check global cooldown for same gesture
+        if self.last_triggered_gesture == finger_count and (now - self.last_trigger_timestamp) < self.cooldown_seconds:
+            logger.debug(f"⏱️ Cooldown active for gesture: {finger_count}")
+            return False
         
-        if actions_triggered:
-            self.last_gesture = finger_count
+        # Handle reset gesture (fist)
+        if finger_count == self.reset_gesture:
+            logger.info(f"🔄 Reset gesture detected - clearing tracking")
+            self.last_triggered_gesture = None
+            self.last_trigger_timestamp = now
+            return True
+        
+        # Handle entity toggle
+        if finger_count in self.gesture_mappings:
+            entity_info = self.gesture_mappings[finger_count]
+            entity_id = entity_info["entity_id"]
+            
+            # Check per-entity cooldown
+            last_trigger = self.last_trigger_time.get(entity_id, 0)
+            if now - last_trigger < self.cooldown_seconds:
+                logger.debug(f"⏱️ Cooldown active for {entity_id}")
+                return False
+            
+            logger.info(f"🎮 Toggling {entity_id} (finger count: {finger_count})")
+            await self.toggle_entity(entity_id)
+            
+            self.last_trigger_time[entity_id] = now
+            self.last_triggered_gesture = finger_count
+            self.last_trigger_timestamp = now
             return True
         
         return False
@@ -462,16 +294,18 @@ class GestureProcessor:
         self.thread = None
         self.cap = None
         
-        # Gesture stability
-        self.gesture_history = deque(maxlen=5)
-        self.current_stable_gesture = None
+        # Gesture stability with sliding window
+        self.gesture_history = deque(maxlen=config["hand_stability_frames"])
+        self.current_stable_gesture = 0
         self.current_finger_count = 0
         self.hand_detected = False
+        self.hand_confidence = 0
         
-        # Debug counters
+        # Performance monitoring
         self.frame_count = 0
         self.detection_count = 0
         self.last_debug_time = time.time()
+        self.processing_time = 0
         
         # Async event loop reference
         self.loop = None
@@ -490,7 +324,7 @@ class GestureProcessor:
         """Stop the processing thread"""
         self.running = False
         if self.thread:
-            self.thread.join(timeout=2)
+            self.thread.join(timeout=3)
         if self.cap:
             self.cap.release()
         logger.info("🛑 Gesture processor stopped")
@@ -503,143 +337,173 @@ class GestureProcessor:
                 self.loop
             )
     
+    def _get_stable_gesture(self):
+        """Get the most common gesture from history, ignoring no-hand"""
+        valid_gestures = [g for g in self.gesture_history if g >= 0]
+        if not valid_gestures:
+            return -1
+        
+        from collections import Counter
+        return Counter(valid_gestures).most_common(1)[0][0]
+    
     def _process_loop(self):
         """Main processing loop in separate thread"""
-        # Initialize MediaPipe in this thread
         global hands
         if hands is None:
             init_mediapipe()
         
-        # Open RTSP stream
-        logger.info(f"🔌 Connecting to RTSP stream...")
+        # Open RTSP stream with retry logic
+        max_retries = 3
+        retry_count = 0
         
-        self.cap = cv2.VideoCapture(config["rtsp_url"], cv2.CAP_FFMPEG)
-        
-        if not self.cap.isOpened():
-            logger.error("❌ Failed to open RTSP stream")
+        while self.running and retry_count < max_retries:
+            logger.info(f"🔌 Connecting to RTSP stream (attempt {retry_count + 1})...")
+            
+            self.cap = cv2.VideoCapture(config["rtsp_url"], cv2.CAP_FFMPEG)
+            
+            if not self.cap.isOpened():
+                logger.error(f"❌ Failed to open RTSP stream (attempt {retry_count + 1})")
+                retry_count += 1
+                if retry_count < max_retries:
+                    time.sleep(3)
+                continue
+            
+            # Set properties for better performance
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+            self.cap.set(cv2.CAP_PROP_FPS, config["fps"])
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, config["frame_width"])
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config["frame_height"])
+            
+            logger.info("✅ RTSP stream connected successfully")
             self._emit_async("status", {
-                "status": "error",
-                "message": "Failed to open RTSP stream"
+                "status": "connected",
+                "message": "Camera connected"
             })
-            return
-        
-        # Set properties
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
-        self.cap.set(cv2.CAP_PROP_FPS, config["fps"])
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, config["frame_width"])
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config["frame_height"])
-        
-        logger.info("✅ RTSP stream connected successfully")
-        self._emit_async("status", {
-            "status": "connected",
-            "message": "Camera connected"
-        })
-        
-        frame_skip = 0
-        process_every_n = max(1, 30 // config["fps"])
-        
-        while self.running:
-            try:
-                # Read frame
-                ret, frame = self.cap.read()
-                if not ret:
-                    logger.warning("⚠️ Failed to read frame")
-                    time.sleep(0.1)
-                    continue
-                
-                self.frame_count += 1
-                
-                # Debug every 100 frames
-                if self.frame_count % 100 == 0:
-                    fps = self.frame_count / (time.time() - self.last_debug_time)
-                    logger.info(f"📊 Stats: {self.frame_count} frames, {self.detection_count} detections, {fps:.1f} FPS, HA: {'✓' if self.ha_client.connected else '✗'}")
-                    self.last_debug_time = time.time()
-                    self.frame_count = 0
-                    self.detection_count = 0
-                
-                # Process every Nth frame
-                frame_skip += 1
-                if frame_skip >= process_every_n:
-                    frame_skip = 0
+            
+            # Reset retry counter on successful connection
+            retry_count = 0
+            
+            # Frame processing loop
+            frame_skip = 0
+            process_every_n = max(1, 30 // config["fps"])
+            last_frame_time = time.time()
+            
+            while self.running:
+                try:
+                    # Read frame
+                    ret, frame = self.cap.read()
+                    if not ret:
+                        logger.warning("⚠️ Failed to read frame, reconnecting...")
+                        break
                     
-                    try:
-                        # Convert to RGB
-                        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    self.frame_count += 1
+                    current_time = time.time()
+                    
+                    # Calculate actual FPS
+                    if self.frame_count % 30 == 0:
+                        fps = 30 / (current_time - last_frame_time)
+                        logger.debug(f"📊 FPS: {fps:.1f}")
+                        last_frame_time = current_time
+                    
+                    # Process every Nth frame
+                    frame_skip += 1
+                    if frame_skip >= process_every_n:
+                        frame_skip = 0
+                        process_start = time.time()
                         
-                        # Process with MediaPipe
-                        results = hands.process(rgb_frame)
-                        
-                        finger_count = 0
-                        self.hand_detected = False
-                        
-                        if results.multi_hand_landmarks:
-                            self.hand_detected = True
-                            self.detection_count += 1
+                        try:
+                            # Convert to RGB and flip horizontally for mirror effect
+                            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                            rgb_frame = cv2.flip(rgb_frame, 1)
                             
-                            # Get first hand
-                            landmarks = results.multi_hand_landmarks[0].landmark
-                            finger_count = count_extended_fingers(landmarks, 
-                                                                  frame.shape[1], 
-                                                                  frame.shape[0])
+                            # Process with MediaPipe
+                            results = hands.process(rgb_frame)
                             
-                            # Log detection occasionally
-                            if self.detection_count % 30 == 0:
-                                logger.info(f"✋ Hand detected - {finger_count} fingers")
-                        
-                        # Update gesture history (only count if hand detected)
-                        if self.hand_detected:
-                            self.gesture_history.append(finger_count)
-                        else:
-                            self.gesture_history.append(-1)  # No hand
-                        
-                        # Find stable gesture
-                        if len(self.gesture_history) == self.gesture_history.maxlen:
-                            # Count only hand detections (ignore -1)
-                            valid_gestures = [g for g in self.gesture_history if g >= 0]
-                            if valid_gestures:
-                                from collections import Counter
-                                stable = Counter(valid_gestures).most_common(1)[0][0]
+                            finger_count = 0
+                            self.hand_detected = False
+                            hand_landmarks = None
+                            
+                            if results.multi_hand_landmarks:
+                                self.hand_detected = True
+                                self.detection_count += 1
                                 
-                                if stable != self.current_stable_gesture:
-                                    self.current_stable_gesture = stable
-                                    logger.info(f"🎭 Stable gesture: {stable} fingers")
-                                    
-                                    # Trigger HA action
-                                    asyncio.run_coroutine_threadsafe(
-                                        self.ha_client.handle_gesture(stable),
-                                        self.ha_client.loop
-                                    )
+                                # Get first hand
+                                hand_landmarks = results.multi_hand_landmarks[0]
+                                landmarks = hand_landmarks.landmark
+                                finger_count = count_extended_fingers(landmarks, 
+                                                                      frame.shape[1], 
+                                                                      frame.shape[0])
                                 
-                                self.current_finger_count = stable
+                                # Log detection periodically
+                                if self.detection_count % 30 == 0:
+                                    logger.info(f"✋ Hand detected - {finger_count} fingers")
+                            
+                            # Update gesture history
+                            if self.hand_detected:
+                                self.gesture_history.append(finger_count)
                             else:
-                                self.current_finger_count = 0
-                                self.current_stable_gesture = None
-                        else:
-                            self.current_finger_count = finger_count if self.hand_detected else 0
-                        
-                        # Broadcast gesture data with mapping info
-                        gesture_info = get_gesture_info(self.current_finger_count, self.ha_client.gesture_mappings)
-                        
-                        self._emit_async("gesture", {
-                            "fingerCount": self.current_finger_count if self.hand_detected else 0,
-                            "gestureName": gesture_info["name"],
-                            "gestureIcon": gesture_info["icon"],
-                            "handDetected": self.hand_detected,
-                            "lastAction": self.ha_client.last_action,
-                            "haConnected": self.ha_client.connected,
-                            "actions": gesture_info["actions"],
-                            "timestamp": datetime.now().isoformat()
-                        })
-                        
-                    except Exception as e:
-                        logger.error(f"❌ Gesture detection error: {e}")
-                
-            except Exception as e:
-                logger.error(f"❌ Frame processing error: {e}")
-                time.sleep(0.1)
+                                self.gesture_history.append(-1)  # No hand
+                            
+                            # Get stable gesture
+                            stable_gesture = self._get_stable_gesture()
+                            
+                            # Check if stable gesture changed
+                            if stable_gesture >= 0 and stable_gesture != self.current_stable_gesture:
+                                self.current_stable_gesture = stable_gesture
+                                logger.info(f"🎭 Stable gesture detected: {stable_gesture} fingers")
+                                
+                                # Trigger HA action in async thread
+                                asyncio.run_coroutine_threadsafe(
+                                    self.ha_client.handle_gesture(stable_gesture),
+                                    self.ha_client.loop
+                                )
+                            
+                            self.current_finger_count = stable_gesture if stable_gesture >= 0 else 0
+                            
+                            # Calculate processing time
+                            self.processing_time = (time.time() - process_start) * 1000
+                            
+                            # Broadcast gesture data
+                            gesture_info = get_gesture_info(self.current_finger_count)
+                            
+                            # Get mapped entity info
+                            mapped_entity = None
+                            if self.current_finger_count in self.ha_client.gesture_mappings:
+                                mapped_entity = self.ha_client.gesture_mappings[self.current_finger_count]["name"]
+                            
+                            self._emit_async("gesture", {
+                                "fingerCount": self.current_finger_count,
+                                "gestureName": gesture_info["name"],
+                                "gestureIcon": gesture_info["icon"],
+                                "handDetected": self.hand_detected,
+                                "lastAction": self.ha_client.last_action,
+                                "haConnected": self.ha_client.connected,
+                                "mappedEntity": mapped_entity,
+                                "processingTime": round(self.processing_time, 1),
+                                "timestamp": datetime.now().isoformat()
+                            })
+                            
+                        except Exception as e:
+                            logger.error(f"❌ Gesture detection error: {e}")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Frame processing error: {e}")
+                    time.sleep(0.05)
+            
+            # Release camera on disconnect
+            if self.cap:
+                self.cap.release()
+                self.cap = None
+            
+            if self.running and retry_count < max_retries:
+                logger.info("🔄 Reconnecting to RTSP stream...")
+                time.sleep(2)
         
-        self.cap.release()
-        logger.info("Camera loop ended")
+        logger.error("❌ Failed to connect to RTSP stream after multiple attempts")
+        self._emit_async("status", {
+            "status": "error",
+            "message": "Failed to connect to camera stream"
+        })
 
 # ========== HTTP SERVER ==========
 class GestureServer:
@@ -663,7 +527,6 @@ class GestureServer:
         self.app.router.add_get("/video", self.video_stream)
         self.app.router.add_get("/health", self.health_check)
         self.app.router.add_get("/config", self.get_config)
-        self.app.router.add_post("/config", self.update_config)
         self.app.router.add_static("/static", "./web")
     
     def _setup_socket_events(self):
@@ -674,7 +537,7 @@ class GestureServer:
             await self.sio.emit("status", {
                 "status": "connected",
                 "haConnected": self.ha_client.connected if self.ha_client else False,
-                "gestureMappings": self.ha_client.gesture_mappings if self.ha_client else [],
+                "gestureMappings": config["gesture_mappings"],
                 "message": "Connected to server"
             })
         
@@ -710,7 +573,6 @@ class GestureServer:
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
-        response.headers["Connection"] = "keep-alive"
         await response.prepare(request)
         
         process = None
@@ -756,31 +618,19 @@ class GestureServer:
             "rtsp_url": config["rtsp_url"],
             "fps": config["fps"],
             "cooldown_seconds": config["cooldown_seconds"],
-            "ha_url": config["ha_url"],
-            "ha_token_configured": bool(config["ha_token"])
+            "reset_gesture": config["reset_gesture"],
+            "ha_connected": self.ha_client.connected if self.ha_client else False
         })
-    
-    async def update_config(self, request):
-        """Update configuration (reload would be needed for changes)"""
-        try:
-            data = await request.json()
-            # This is a simplified example - in production you'd write to config file
-            logger.info(f"Config update requested: {data}")
-            return aiohttp.web.json_response({"status": "config_update_requested", "reload_required": True})
-        except Exception as e:
-            logger.error(f"Failed to update config: {e}")
-            return aiohttp.web.json_response({"error": str(e)}, status=400)
     
     async def health_check(self, request):
         """Health check endpoint"""
         return aiohttp.web.json_response({
             "status": "ok",
             "ha_connected": self.ha_client.connected if self.ha_client else False,
-            "ha_url": self.ha_client.url if self.ha_client else None,
             "gesture_running": self.gesture_processor.running if self.gesture_processor else False,
             "current_gesture": self.gesture_processor.current_finger_count if self.gesture_processor else 0,
             "hand_detected": self.gesture_processor.hand_detected if self.gesture_processor else False,
-            "gesture_mappings": self.ha_client.gesture_mappings if self.ha_client else [],
+            "processing_time": self.gesture_processor.processing_time if self.gesture_processor else 0,
             "fps": config["fps"],
             "uptime": datetime.now().isoformat()
         })
@@ -791,25 +641,26 @@ class GestureServer:
         logger.info("=" * 60)
         logger.info("🎮 Starting Gesture Control Add-on (Enhanced)")
         logger.info("=" * 60)
-        logger.info(f"📹 RTSP URL: {'✅ Configured' if config['rtsp_url'] != 'rtsp://your-camera-ip:554/stream' else '⚠️ Using default'}")
+        logger.info(f"📹 RTSP URL: {config['rtsp_url']}")
         logger.info(f"🎯 Gesture Mappings:")
         for mapping in config["gesture_mappings"]:
-            logger.info(f"   - {mapping['finger_count']} fingers: {mapping['entity_id']} ({mapping.get('action', 'toggle')})")
+            logger.info(f"   - {mapping['finger_count']} fingers → {mapping['entity_id']} ({mapping['name']})")
+        logger.info(f"🔄 Reset gesture: {config['reset_gesture']} fingers (Fist)")
         logger.info(f"⏱️  Cooldown: {config['cooldown_seconds']}s")
         logger.info(f"🎯 Detection Confidence: {config['detection_confidence']}")
         logger.info(f"🎯 Tracking Confidence: {config['tracking_confidence']}")
         logger.info(f"📐 Resolution: {config['frame_width']}x{config['frame_height']}")
         logger.info(f"⚡ Target FPS: {config['fps']}")
         logger.info(f"🔌 HA URL: {config['ha_url']}")
-        logger.info(f"🔑 HA Token: {config['ha_token'][:20]}..." if config['ha_token'] else "⚠️ No token set")
         logger.info("=" * 60)
         
-        # Initialize HA client with gesture mappings
+        # Initialize HA client
         self.ha_client = HAClient(
             config["ha_url"],
             config["ha_token"],
             config["gesture_mappings"],
-            config["cooldown_seconds"]
+            config["cooldown_seconds"],
+            config["reset_gesture"]
         )
         self.ha_client.set_loop(asyncio.get_event_loop())
         
@@ -848,13 +699,6 @@ class GestureServer:
             if self.ha_client and not self.ha_client.connected:
                 logger.info("🔄 Reconnecting to HA...")
                 await self.ha_client.connect()
-                if self.gesture_processor:
-                    await self.sio.emit("status", {
-                        "status": "ha_reconnected",
-                        "haConnected": self.ha_client.connected,
-                        "gestureMappings": self.ha_client.gesture_mappings,
-                        "message": "Reconnected to Home Assistant"
-                    })
 
 # ========== MAIN ENTRY POINT ==========
 def main():
