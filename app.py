@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Gesture Control Add-on with RTSP Camera and Live Video Stream
+Gesture Control Add-on with RTSP Camera and H.264 Live Video Stream
 - RTSP camera stream processing with MediaPipe Hands
-- Optimized MJPEG video streaming with error handling
+- H.264 video streaming with hardware acceleration
 - WebSocket for real-time gesture updates
+- Optimized buffer management
 """
 
 import asyncio
@@ -21,6 +22,10 @@ import socketio
 import websockets
 from collections import deque
 import io
+import subprocess
+import tempfile
+import shutil
+from fractions import Fraction
 
 # Configure logging
 logging.basicConfig(
@@ -41,6 +46,8 @@ TRACKING_CONFIDENCE = 0.5
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 FPS = 15
+VIDEO_BITRATE = 1000  # kbps
+USE_HARDWARE_ACCEL = True  # Use GPU/VAAPI if available
 
 # Load configuration
 try:
@@ -59,6 +66,8 @@ try:
             FRAME_WIDTH = config.get('frame_width', FRAME_WIDTH)
             FRAME_HEIGHT = config.get('frame_height', FRAME_HEIGHT)
             FPS = config.get('fps', FPS)
+            VIDEO_BITRATE = config.get('video_bitrate', VIDEO_BITRATE)
+            USE_HARDWARE_ACCEL = config.get('use_hardware_accel', USE_HARDWARE_ACCEL)
             logger.info("✅ Loaded configuration")
 except Exception as e:
     logger.error(f"Error loading config: {e}")
@@ -78,6 +87,11 @@ frame_lock = threading.Lock()
 frame_counter = 0
 last_frame_time = time.time()
 
+# H.264 encoder process
+encoder_process = None
+encoder_lock = threading.Lock()
+encoder_ready = False
+
 # WebSocket server for frontend
 sio = socketio.AsyncServer(cors_allowed_origins='*', async_mode='aiohttp')
 app = web.Application()
@@ -86,6 +100,188 @@ sio.attach(app)
 # HA WebSocket connection
 ha_websocket = None
 ha_connected = False
+
+# ============================================================================
+# H.264 ENCODER SETUP
+# ============================================================================
+
+def check_hardware_accel():
+    """Check available hardware acceleration"""
+    accel_options = []
+    
+    # Check for VAAPI (Intel/AMD)
+    if shutil.which('vainfo'):
+        try:
+            result = subprocess.run(['vainfo'], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                accel_options.append('vaapi')
+        except:
+            pass
+    
+    # Check for NVENC (NVIDIA)
+    if shutil.which('nvidia-smi'):
+        try:
+            result = subprocess.run(['nvidia-smi'], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                accel_options.append('nvenc')
+        except:
+            pass
+    
+    return accel_options
+
+def get_encoder_params():
+    """Get optimal encoder parameters for H.264"""
+    width = FRAME_WIDTH
+    height = FRAME_HEIGHT
+    fps = FPS
+    bitrate = VIDEO_BITRATE * 1000  # Convert to bps
+    
+    # Ensure dimensions are even for encoder
+    width = width - (width % 2)
+    height = height - (height % 2)
+    
+    base_params = [
+        'ffmpeg',
+        '-f', 'rawvideo',
+        '-pix_fmt', 'bgr24',
+        '-s', f'{width}x{height}',
+        '-r', str(fps),
+        '-i', 'pipe:0',
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-tune', 'zerolatency',
+        '-b:v', f'{bitrate}',
+        '-pix_fmt', 'yuv420p',
+        '-g', str(fps * 2),
+        '-keyint_min', str(fps),
+        '-sc_threshold', '0',
+        '-f', 'mp4',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        '-pipe:1'
+    ]
+    
+    # Try hardware acceleration if enabled
+    if USE_HARDWARE_ACCEL:
+        accel_options = check_hardware_accel()
+        
+        if 'vaapi' in accel_options:
+            logger.info("🎬 Using VAAPI hardware acceleration")
+            base_params = [
+                'ffmpeg',
+                '-f', 'rawvideo',
+                '-pix_fmt', 'bgr24',
+                '-s', f'{width}x{height}',
+                '-r', str(fps),
+                '-i', 'pipe:0',
+                '-c:v', 'h264_vaapi',
+                '-vf', 'format=nv12,hwupload',
+                '-b:v', f'{bitrate}',
+                '-global_quality', '25',
+                '-f', 'mp4',
+                '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+                '-pipe:1'
+            ]
+        elif 'nvenc' in accel_options:
+            logger.info("🎬 Using NVENC hardware acceleration")
+            base_params = [
+                'ffmpeg',
+                '-f', 'rawvideo',
+                '-pix_fmt', 'bgr24',
+                '-s', f'{width}x{height}',
+                '-r', str(fps),
+                '-i', 'pipe:0',
+                '-c:v', 'h264_nvenc',
+                '-preset', 'p1',
+                '-tune', 'll',
+                '-b:v', f'{bitrate}',
+                '-rc', 'vbr',
+                '-f', 'mp4',
+                '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+                '-pipe:1'
+            ]
+        else:
+            logger.info("🎬 Using software encoding (libx264)")
+    else:
+        logger.info("🎬 Using software encoding (libx264)")
+    
+    return base_params
+
+def start_encoder():
+    """Start H.264 encoder process"""
+    global encoder_process, encoder_ready
+    
+    with encoder_lock:
+        if encoder_process is not None:
+            try:
+                encoder_process.terminate()
+                encoder_process.wait(timeout=2)
+            except:
+                encoder_process.kill()
+            encoder_process = None
+        
+        encoder_params = get_encoder_params()
+        logger.info(f"Starting H.264 encoder: {' '.join(encoder_params)}")
+        
+        try:
+            encoder_process = subprocess.Popen(
+                encoder_params,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0
+            )
+            encoder_ready = True
+            logger.info("✅ H.264 encoder started")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to start encoder: {e}")
+            encoder_ready = False
+            return False
+
+def encode_frame_to_h264(frame):
+    """Encode a single frame to H.264 format"""
+    global encoder_process, encoder_ready
+    
+    if not encoder_ready or encoder_process is None:
+        if not start_encoder():
+            return None
+    
+    try:
+        # Ensure frame is continuous in memory
+        frame_data = np.ascontiguousarray(frame).tobytes()
+        
+        # Write to encoder stdin
+        encoder_process.stdin.write(frame_data)
+        encoder_process.stdin.flush()
+        
+        # Read encoded data
+        # Read until we have a complete frame (check for moov atoms)
+        encoded_data = b''
+        timeout_start = time.time()
+        
+        while time.time() - timeout_start < 0.1:  # 100ms timeout
+            # Read available data
+            data = encoder_process.stdout.read(4096)
+            if not data:
+                break
+            encoded_data += data
+            
+            # Check if we have a complete MP4 fragment
+            if b'moof' in encoded_data and len(encoded_data) > 1000:
+                break
+        
+        if encoded_data:
+            return encoded_data
+        return None
+        
+    except (BrokenPipeError, OSError) as e:
+        logger.error(f"Encoder pipe error: {e}")
+        encoder_ready = False
+        encoder_process = None
+        return None
+    except Exception as e:
+        logger.error(f"Frame encoding error: {e}")
+        return None
 
 # ============================================================================
 # FINGER COUNTING
@@ -319,15 +515,16 @@ async def trigger_action(finger_count):
 # ============================================================================
 
 def camera_processor():
-    """Background thread for RTSP camera processing with improved stability"""
+    """Background thread for RTSP camera processing with H.264 encoding"""
     global current_frame, current_frame_ready, current_finger_count, current_gesture_name
     global current_gesture_icon, detection_status, camera_active, frame_counter, last_frame_time
+    global encoder_ready
     
     if not RTSP_URL:
         logger.error("❌ No RTSP URL configured")
         return
     
-    logger.info("📹 Starting camera processor")
+    logger.info("📹 Starting camera processor with H.264 encoding")
     
     # Initialize MediaPipe Hands
     mp_hands = mp.solutions.hands
@@ -343,6 +540,9 @@ def camera_processor():
     reconnect_delay = 1
     stable_frame_count = 0
     last_valid_frame = None
+    
+    # Start H.264 encoder
+    start_encoder()
     
     # Create a blank frame for when camera is disconnected
     blank_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
@@ -365,6 +565,10 @@ def camera_processor():
                 with frame_lock:
                     current_frame = blank_frame.copy()
                     current_frame_ready = True
+                
+                # Reinitialize encoder on reconnect
+                if not encoder_ready:
+                    start_encoder()
                 
                 cap = cv2.VideoCapture(RTSP_URL)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
@@ -452,6 +656,11 @@ def camera_processor():
             cv2.putText(output_frame, ha_text, (FRAME_WIDTH - 150, 30),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, ha_color, 1)
             
+            # Encoder status
+            encoder_text = "H.264: Active" if encoder_ready else "H.264: Inactive"
+            cv2.putText(output_frame, encoder_text, (FRAME_WIDTH - 150, 55),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+            
             # Cooldown
             if last_trigger_time > 0:
                 remaining = COOLDOWN_SECONDS - (time.time() - last_trigger_time)
@@ -498,17 +707,18 @@ def camera_processor():
             reconnect_delay = min(reconnect_delay * 2, 30)
 
 # ============================================================================
-# OPTIMIZED VIDEO STREAM HANDLER
+# H.264 VIDEO STREAM HANDLER
 # ============================================================================
 
 async def video_stream(request):
-    """MJPEG video stream with better error handling"""
+    """H.264 video stream with MP4 fragmentation"""
     response = web.StreamResponse()
     response.headers.update({
-        'Content-Type': 'multipart/x-mixed-replace; boundary=--jpgboundary',
+        'Content-Type': 'video/mp4',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',
-        'Expires': '0'
+        'Expires': '0',
+        'Accept-Ranges': 'none'
     })
     await response.prepare(request)
     
@@ -524,16 +734,49 @@ async def video_stream(request):
                     await asyncio.sleep(0.05)
                     continue
             
-            # Only send if frame changed (reduce bandwidth)
-            frame_hash = hash(frame.tobytes())
-            if last_frame_sent == frame_hash and frame_count % 3 != 0:
-                await asyncio.sleep(1.0 / FPS)
-                continue
+            # Encode frame to H.264
+            encoded_data = await asyncio.get_event_loop().run_in_executor(
+                None, encode_frame_to_h264, frame
+            )
             
-            last_frame_sent = frame_hash
-            frame_count += 1
+            if encoded_data:
+                # Send H.264/MP4 fragment
+                await response.write(encoded_data)
+                frame_count += 1
             
-            # Encode frame with good quality
+            # Control frame rate
+            await asyncio.sleep(1.0 / FPS)
+            
+    except Exception as e:
+        logger.error(f"H.264 stream error: {e}")
+    
+    return response
+
+# ============================================================================
+# ALTERNATIVE MJPEG STREAM (Fallback)
+# ============================================================================
+
+async def mjpeg_stream(request):
+    """MJPEG video stream as fallback"""
+    response = web.StreamResponse()
+    response.headers.update({
+        'Content-Type': 'multipart/x-mixed-replace; boundary=--jpgboundary',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+    })
+    await response.prepare(request)
+    
+    try:
+        while True:
+            with frame_lock:
+                if current_frame_ready and current_frame is not None:
+                    frame = current_frame.copy()
+                else:
+                    await asyncio.sleep(0.05)
+                    continue
+            
+            # Encode to JPEG
             encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 75]
             _, jpeg = cv2.imencode('.jpg', frame, encode_param)
             frame_data = jpeg.tobytes()
@@ -545,11 +788,10 @@ async def video_stream(request):
             await response.write(frame_data)
             await response.write(b'\r\n')
             
-            # Control frame rate
             await asyncio.sleep(1.0 / FPS)
             
     except Exception as e:
-        logger.error(f"Stream error: {e}")
+        logger.error(f"MJPEG stream error: {e}")
     
     return response
 
@@ -569,7 +811,8 @@ async def connect(sid, environ):
         'status': detection_status,
         'cameraActive': camera_active,
         'haConnected': ha_connected,
-        'cooldownRemaining': cooldown
+        'cooldownRemaining': cooldown,
+        'encoderActive': encoder_ready
     }, room=sid)
 
 @sio.on('disconnect')
@@ -590,7 +833,8 @@ async def broadcast_state():
                 'status': detection_status,
                 'cameraActive': camera_active,
                 'haConnected': ha_connected,
-                'cooldownRemaining': cooldown
+                'cooldownRemaining': cooldown,
+                'encoderActive': encoder_ready
             })
         except Exception as e:
             logger.error(f"Broadcast error: {e}")
@@ -630,23 +874,46 @@ async def health_handler(request):
         'camera_active': camera_active,
         'gesture': current_gesture_name,
         'finger_count': current_finger_count,
-        'ha_connected': ha_connected
+        'ha_connected': ha_connected,
+        'encoder_active': encoder_ready,
+        'video_format': 'h264'
     })
 
 # ============================================================================
 # MAIN APPLICATION
 # ============================================================================
 
+async def cleanup_encoder():
+    """Clean up encoder process on shutdown"""
+    global encoder_process
+    if encoder_process:
+        try:
+            encoder_process.terminate()
+            encoder_process.wait(timeout=2)
+        except:
+            encoder_process.kill()
+        logger.info("Encoder process terminated")
+
 async def main():
     """Main async entry point"""
     logger.info("=" * 60)
-    logger.info("🎮 Gesture Control Add-on with RTSP Camera")
+    logger.info("🎮 Gesture Control Add-on with H.264 Camera Stream")
     logger.info("=" * 60)
     logger.info(f"📹 RTSP: {'✅' if RTSP_URL else '❌'}")
+    logger.info(f"🎬 H.264 Encoding: {'✅' if USE_HARDWARE_ACCEL else '⚠️ Software'}")
+    logger.info(f"🎬 Bitrate: {VIDEO_BITRATE} kbps")
     logger.info(f"🔌 HA: {HA_URL}")
     logger.info(f"💡 Strip: {STRIP_LIGHT_ENTITY}")
     logger.info(f"💡 Row 3: {ROW_3_ENTITY}")
     logger.info("=" * 60)
+    
+    # Check hardware acceleration
+    if USE_HARDWARE_ACCEL:
+        accel = check_hardware_accel()
+        if accel:
+            logger.info(f"✅ Hardware acceleration available: {', '.join(accel)}")
+        else:
+            logger.warning("⚠️ No hardware acceleration found, using software encoding")
     
     # Connect to HA
     if HA_TOKEN:
@@ -664,7 +931,11 @@ async def main():
     # Setup routes
     app.router.add_get('/', index_handler)
     app.router.add_get('/video', video_stream)
+    app.router.add_get('/mjpeg', mjpeg_stream)  # Fallback MJPEG stream
     app.router.add_get('/health', health_handler)
+    
+    # Register cleanup
+    app.on_shutdown.append(lambda _: cleanup_encoder())
     
     # Run server
     runner = web.AppRunner(app)
@@ -674,7 +945,8 @@ async def main():
     
     logger.info("=" * 60)
     logger.info("🌐 Server: http://0.0.0.0:8099")
-    logger.info("🎥 Video: http://[IP]:8099/video")
+    logger.info("🎥 H.264 Stream: http://[IP]:8099/video")
+    logger.info("🎥 MJPEG Stream (fallback): http://[IP]:8099/mjpeg")
     logger.info("=" * 60)
     
     await asyncio.Event().wait()

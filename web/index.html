@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Gesture Control - RTSP Camera</title>
+    <title>Gesture Control - H.264 Stream</title>
     <style>
         * {
             margin: 0;
@@ -24,7 +24,7 @@
             background: #000;
         }
 
-        #videoStream {
+        video {
             position: absolute;
             top: 0;
             left: 0;
@@ -32,6 +32,18 @@
             height: 100%;
             object-fit: cover;
             transform: scaleX(-1);
+        }
+
+        /* Fallback image for MJPEG */
+        img#mjpegStream {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+            display: none;
         }
 
         /* Gesture display overlay */
@@ -160,6 +172,21 @@
             pointer-events: none;
         }
 
+        .encoder-status {
+            position: fixed;
+            top: 60px;
+            right: 20px;
+            background: rgba(0,0,0,0.7);
+            padding: 8px 15px;
+            border-radius: 20px;
+            color: #ffaa00;
+            font-family: monospace;
+            font-size: 12px;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+            pointer-events: none;
+        }
+
         .cooldown {
             position: fixed;
             bottom: 20px;
@@ -172,6 +199,26 @@
             font-size: 12px;
             z-index: 1000;
             backdrop-filter: blur(5px);
+        }
+
+        .video-format-toggle {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.7);
+            padding: 5px 10px;
+            border-radius: 20px;
+            color: #fff;
+            font-family: monospace;
+            font-size: 10px;
+            z-index: 1000;
+            cursor: pointer;
+            pointer-events: auto;
+            backdrop-filter: blur(5px);
+        }
+
+        .video-format-toggle:hover {
+            background: rgba(0,0,0,0.9);
         }
 
         @media (max-width: 768px) {
@@ -196,7 +243,10 @@
 </head>
 <body>
     <div class="container">
-        <img id="videoStream" src="/video" alt="Camera Stream">
+        <!-- H.264 Video Element -->
+        <video id="videoStream" autoplay muted playsinline></video>
+        <!-- Fallback MJPEG Image -->
+        <img id="mjpegStream" src="" alt="Camera Stream (Fallback)">
         
         <div class="gesture-display">
             <div class="current-gesture">
@@ -227,7 +277,9 @@
         
         <div class="status" id="status">🟡 Connecting to camera...</div>
         <div class="ha-status" id="haStatus">🔌 HA: Connecting...</div>
+        <div class="encoder-status" id="encoderStatus">🎬 H.264: Connecting...</div>
         <div class="cooldown" id="cooldown">⏱️ Ready</div>
+        <div class="video-format-toggle" id="toggleFormat">🔄 Switch to MJPEG</div>
     </div>
 
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
@@ -237,25 +289,121 @@
         const fingerCount = document.getElementById('fingerCount');
         const statusEl = document.getElementById('status');
         const haStatusEl = document.getElementById('haStatus');
+        const encoderStatusEl = document.getElementById('encoderStatus');
         const cooldownEl = document.getElementById('cooldown');
-        const videoStream = document.getElementById('videoStream');
+        const videoElement = document.getElementById('videoStream');
+        const mjpegElement = document.getElementById('mjpegStream');
+        const toggleBtn = document.getElementById('toggleFormat');
         
         let socket = null;
         let lastGesture = null;
+        let useH264 = true;
+        
+        // Initialize video stream
+        function initVideoStream() {
+            if (useH264) {
+                videoElement.style.display = 'block';
+                mjpegElement.style.display = 'none';
+                toggleBtn.textContent = '🔄 Switch to MJPEG';
+                
+                // Create MediaSource for H.264
+                const mediaSource = new MediaSource();
+                videoElement.src = URL.createObjectURL(mediaSource);
+                
+                let sourceBuffer = null;
+                let videoQueue = [];
+                let isUpdating = false;
+                
+                mediaSource.addEventListener('sourceopen', () => {
+                    try {
+                        sourceBuffer = mediaSource.addSourceBuffer('video/mp4; codecs="avc1.42E01E"');
+                        sourceBuffer.mode = 'sequence';
+                        
+                        sourceBuffer.addEventListener('updateend', () => {
+                            isUpdating = false;
+                            if (videoQueue.length > 0) {
+                                appendToBuffer(videoQueue.shift());
+                            }
+                        });
+                        
+                        // Fetch H.264 stream
+                        fetchVideoStream();
+                    } catch (e) {
+                        console.error('MediaSource error:', e);
+                        fallbackToMJPEG();
+                    }
+                });
+                
+                function appendToBuffer(data) {
+                    if (!sourceBuffer || isUpdating) {
+                        videoQueue.push(data);
+                        return;
+                    }
+                    try {
+                        isUpdating = true;
+                        sourceBuffer.appendBuffer(data);
+                    } catch (e) {
+                        console.error('Append error:', e);
+                        fallbackToMJPEG();
+                    }
+                }
+                
+                async function fetchVideoStream() {
+                    try {
+                        const response = await fetch('/video');
+                        const reader = response.body.getReader();
+                        
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+                            if (sourceBuffer && mediaSource.readyState === 'open') {
+                                appendToBuffer(value);
+                            }
+                        }
+                    } catch (e) {
+                        console.error('H.264 stream error:', e);
+                        fallbackToMJPEG();
+                    }
+                }
+            } else {
+                videoElement.style.display = 'none';
+                mjpegElement.style.display = 'block';
+                mjpegElement.src = '/mjpeg?_=' + Date.now();
+                toggleBtn.textContent = '🔄 Switch to H.264';
+            }
+        }
+        
+        function fallbackToMJPEG() {
+            if (useH264) {
+                console.log('Falling back to MJPEG stream');
+                useH264 = false;
+                initVideoStream();
+            }
+        }
         
         // Reload video stream if it fails
-        videoStream.onerror = () => {
+        mjpegElement.onerror = () => {
             statusEl.innerHTML = '❌ Camera stream error - reconnecting...';
             statusEl.style.color = '#f00';
             setTimeout(() => {
-                videoStream.src = '/video?_=' + Date.now();
+                mjpegElement.src = '/mjpeg?_=' + Date.now();
             }, 3000);
         };
         
-        videoStream.onload = () => {
-            statusEl.innerHTML = '✅ Camera active - Show your hand!';
+        mjpegElement.onload = () => {
+            statusEl.innerHTML = '✅ Camera active (MJPEG) - Show your hand!';
             statusEl.style.color = '#0f0';
         };
+        
+        videoElement.onerror = () => {
+            fallbackToMJPEG();
+        };
+        
+        // Toggle video format
+        toggleBtn.addEventListener('click', () => {
+            useH264 = !useH264;
+            initVideoStream();
+        });
         
         // WebSocket connection for gesture data
         function connectWebSocket() {
@@ -297,6 +445,15 @@
                     statusEl.style.color = '#ffaa00';
                 }
                 
+                // Update encoder status
+                if (data.encoderActive) {
+                    encoderStatusEl.innerHTML = '🎬 H.264: Active';
+                    encoderStatusEl.style.color = '#0f0';
+                } else {
+                    encoderStatusEl.innerHTML = '🎬 H.264: Inactive';
+                    encoderStatusEl.style.color = '#f00';
+                }
+                
                 // Update cooldown
                 if (data.cooldownRemaining > 0) {
                     cooldownEl.innerHTML = `⏱️ Cooldown: ${data.cooldownRemaining.toFixed(1)}s`;
@@ -308,11 +465,7 @@
                 
                 // Show last action if any
                 if (data.lastAction && data.lastAction !== '') {
-                    const actionMsg = document.createElement('div');
-                    actionMsg.className = 'action-toast';
-                    actionMsg.textContent = `🎯 ${data.lastAction}`;
-                    document.body.appendChild(actionMsg);
-                    setTimeout(() => actionMsg.remove(), 2000);
+                    showActionToast(data.lastAction);
                 }
             });
             
@@ -324,6 +477,14 @@
                     gestureIcon.style.transform = 'scale(1)';
                 }, 200);
             });
+        }
+        
+        function showActionToast(action) {
+            const actionMsg = document.createElement('div');
+            actionMsg.className = 'action-toast';
+            actionMsg.textContent = `🎯 ${action}`;
+            document.body.appendChild(actionMsg);
+            setTimeout(() => actionMsg.remove(), 2000);
         }
         
         // Add CSS for action toast
@@ -366,6 +527,7 @@
         
         // Initialize
         connectWebSocket();
+        initVideoStream();
         
         // Health check every 10 seconds
         setInterval(async () => {
@@ -380,12 +542,16 @@
                     haStatusEl.innerHTML = '🔌 HA: Disconnected';
                     haStatusEl.style.color = '#f00';
                 }
+                if (data.video_format === 'h264') {
+                    encoderStatusEl.innerHTML = '🎬 H.264: Active';
+                    encoderStatusEl.style.color = '#0f0';
+                }
             } catch (e) {
                 console.error('Health check failed:', e);
             }
         }, 10000);
         
-        console.log('Frontend ready - waiting for video stream');
+        console.log('Frontend ready - using H.264 video stream');
     </script>
 </body>
 </html>
