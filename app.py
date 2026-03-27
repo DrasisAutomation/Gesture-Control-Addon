@@ -86,7 +86,7 @@ def init_mediapipe():
         max_num_hands=1,
         min_detection_confidence=config["detection_confidence"],
         min_tracking_confidence=config["tracking_confidence"],
-        model_complexity=1
+        model_complexity=0  # Use simpler model for better performance
     )
     logger.info("✅ MediaPipe initialized")
 
@@ -157,6 +157,7 @@ class HAClient:
         self.last_trigger_time = 0
         self.last_action = ""
         self.loop = None
+        self.reconnect_task = None
         
     def set_loop(self, loop):
         self.loop = loop
@@ -164,6 +165,10 @@ class HAClient:
     async def connect(self):
         """Connect to Home Assistant WebSocket"""
         try:
+            # Close existing session if any
+            if self.session and not self.session.closed:
+                await self.session.close()
+            
             self.session = aiohttp.ClientSession()
             self.ws = await self.session.ws_connect(self.url)
             
@@ -179,6 +184,11 @@ class HAClient:
                 self.connected = True
                 logger.info("✅ HA WebSocket connected and authenticated")
                 return True
+            elif msg.get("type") == "auth_invalid":
+                logger.error(f"❌ HA auth invalid: {msg.get('message', 'Invalid token')}")
+                logger.error("Please check your HA token in add-on configuration")
+                self.connected = False
+                return False
             else:
                 logger.error(f"❌ HA auth failed: {msg}")
                 self.connected = False
@@ -208,10 +218,15 @@ class HAClient:
             return True
         except Exception as e:
             logger.error(f"❌ Failed to call service: {e}")
+            self.connected = False
             return False
     
     async def handle_gesture(self, finger_count):
         """Handle gesture and trigger HA actions with cooldown"""
+        if not self.connected:
+            logger.debug("Not connected to HA, ignoring gesture")
+            return False
+            
         now = time.time()
         
         # Cooldown check
@@ -244,7 +259,7 @@ class HAClient:
         """Disconnect from Home Assistant"""
         if self.ws:
             await self.ws.close()
-        if self.session:
+        if self.session and not self.session.closed:
             await self.session.close()
         self.connected = False
 
@@ -263,12 +278,18 @@ class GestureProcessor:
         self.gesture_history = deque(maxlen=5)
         self.current_stable_gesture = None
         self.current_finger_count = 0
+        self.hand_detected = False
         
-        # Frame counter for throttling
-        self.process_every_n = max(1, 30 // config["fps"])
+        # Debug counters
+        self.frame_count = 0
+        self.detection_count = 0
+        self.last_debug_time = time.time()
         
-        # Reconnection tracking
-        self.reconnect_attempts = 0
+        # Async event loop reference
+        self.loop = None
+        
+    def set_loop(self, loop):
+        self.loop = loop
         
     def start(self):
         """Start the processing thread"""
@@ -286,6 +307,14 @@ class GestureProcessor:
             self.cap.release()
         logger.info("🛑 Gesture processor stopped")
     
+    def _emit_async(self, event, data):
+        """Emit Socket.IO event safely from thread"""
+        if self.sio_server and self.loop:
+            asyncio.run_coroutine_threadsafe(
+                self.sio_server.emit(event, data),
+                self.loop
+            )
+    
     def _process_loop(self):
         """Main processing loop in separate thread"""
         # Initialize MediaPipe in this thread
@@ -293,72 +322,100 @@ class GestureProcessor:
         if hands is None:
             init_mediapipe()
         
-        target_fps = config["fps"]
-        frame_time = 1.0 / target_fps
+        # Open RTSP stream
+        logger.info(f"🔌 Connecting to RTSP stream...")
+        
+        self.cap = cv2.VideoCapture(config["rtsp_url"], cv2.CAP_FFMPEG)
+        
+        if not self.cap.isOpened():
+            logger.error("❌ Failed to open RTSP stream")
+            self._emit_async("status", {
+                "status": "error",
+                "message": "Failed to open RTSP stream"
+            })
+            return
+        
+        # Set properties
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+        self.cap.set(cv2.CAP_PROP_FPS, config["fps"])
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, config["frame_width"])
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config["frame_height"])
+        
+        logger.info("✅ RTSP stream connected successfully")
+        self._emit_async("status", {
+            "status": "connected",
+            "message": "Camera connected"
+        })
+        
+        frame_skip = 0
+        process_every_n = max(1, 30 // config["fps"])
         
         while self.running:
             try:
-                logger.info("🔌 Connecting to RTSP stream...")
-                
-                # Open RTSP stream with improved settings
-                self.cap = cv2.VideoCapture(config["rtsp_url"], cv2.CAP_FFMPEG)
-                
-                # Critical settings for stable streaming
-                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
-                self.cap.set(cv2.CAP_PROP_FPS, target_fps)
-                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, config["frame_width"])
-                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config["frame_height"])
-                
-                if not self.cap.isOpened():
-                    logger.error(f"❌ Failed to open RTSP stream: {config['rtsp_url'][:50]}...")
-                    self._broadcast_status("error", "Failed to open RTSP stream")
-                    time.sleep(5)
+                # Read frame
+                ret, frame = self.cap.read()
+                if not ret:
+                    logger.warning("⚠️ Failed to read frame")
+                    time.sleep(0.1)
                     continue
                 
-                logger.info("✅ RTSP stream connected successfully")
-                self.reconnect_attempts = 0
-                frame_skip = 0
-                stable_frame_counter = 0
+                self.frame_count += 1
                 
-                while self.running:
-                    start_time = time.time()
+                # Debug every 100 frames
+                if self.frame_count % 100 == 0:
+                    fps = self.frame_count / (time.time() - self.last_debug_time)
+                    logger.info(f"📊 Stats: {self.frame_count} frames, {self.detection_count} detections, {fps:.1f} FPS")
+                    self.last_debug_time = time.time()
+                    self.frame_count = 0
+                    self.detection_count = 0
+                
+                # Process every Nth frame
+                frame_skip += 1
+                if frame_skip >= process_every_n:
+                    frame_skip = 0
                     
-                    # Read frame
-                    ret, frame = self.cap.read()
-                    if not ret:
-                        logger.warning("⚠️ Failed to read frame, reconnecting...")
-                        break
-                    
-                    # Process every Nth frame for detection
-                    frame_skip += 1
-                    if frame_skip >= self.process_every_n:
-                        frame_skip = 0
+                    try:
+                        # Convert to RGB
+                        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         
-                        try:
-                            # Convert BGR to RGB
-                            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        # Process with MediaPipe
+                        results = hands.process(rgb_frame)
+                        
+                        finger_count = 0
+                        self.hand_detected = False
+                        
+                        if results.multi_hand_landmarks:
+                            self.hand_detected = True
+                            self.detection_count += 1
                             
-                            # Process with MediaPipe
-                            results = hands.process(rgb_frame)
+                            # Get first hand
+                            landmarks = results.multi_hand_landmarks[0].landmark
+                            finger_count = count_extended_fingers(landmarks, 
+                                                                  frame.shape[1], 
+                                                                  frame.shape[0])
                             
-                            finger_count = 0
-                            if results.multi_hand_landmarks:
-                                landmarks = results.multi_hand_landmarks[0].landmark
-                                finger_count = count_extended_fingers(landmarks, 
-                                                                      frame.shape[1], 
-                                                                      frame.shape[0])
-                            
-                            # Update gesture history
+                            # Log detection occasionally
+                            if self.detection_count % 30 == 0:
+                                logger.info(f"✋ Hand detected - {finger_count} fingers")
+                        
+                        # Update gesture history (only count if hand detected)
+                        if self.hand_detected:
                             self.gesture_history.append(finger_count)
-                            
-                            # Find stable gesture (most common in history)
-                            if len(self.gesture_history) == self.gesture_history.maxlen:
+                        else:
+                            self.gesture_history.append(-1)  # No hand
+                        
+                        # Find stable gesture
+                        if len(self.gesture_history) == self.gesture_history.maxlen:
+                            # Count only hand detections (ignore -1)
+                            valid_gestures = [g for g in self.gesture_history if g >= 0]
+                            if valid_gestures:
                                 from collections import Counter
-                                stable = Counter(self.gesture_history).most_common(1)[0][0]
+                                stable = Counter(valid_gestures).most_common(1)[0][0]
                                 
                                 if stable != self.current_stable_gesture:
                                     self.current_stable_gesture = stable
                                     logger.info(f"🎭 Stable gesture: {stable} fingers")
+                                    
                                     # Trigger HA action
                                     asyncio.run_coroutine_threadsafe(
                                         self.ha_client.handle_gesture(stable),
@@ -367,72 +424,39 @@ class GestureProcessor:
                                 
                                 self.current_finger_count = stable
                             else:
-                                self.current_finger_count = finger_count
-                            
-                            # Broadcast gesture data
+                                self.current_finger_count = 0
+                                self.current_stable_gesture = None
+                        else:
+                            self.current_finger_count = finger_count if self.hand_detected else 0
+                        
+                        # Broadcast gesture data
+                        if self.hand_detected:
                             gesture_info = get_gesture_info(self.current_finger_count)
-                            self._broadcast_gesture(
-                                self.current_finger_count,
-                                gesture_info["name"],
-                                gesture_info["icon"]
-                            )
-                            
-                        except Exception as e:
-                            logger.error(f"❌ Gesture detection error: {e}")
-                    
-                    # Maintain target FPS
-                    elapsed = time.time() - start_time
-                    if elapsed < frame_time:
-                        time.sleep(frame_time - elapsed)
+                            gesture_name = gesture_info["name"]
+                            gesture_icon = gesture_info["icon"]
+                        else:
+                            gesture_name = "No Hand"
+                            gesture_icon = "🤚"
+                        
+                        self._emit_async("gesture", {
+                            "fingerCount": self.current_finger_count if self.hand_detected else 0,
+                            "gestureName": gesture_name,
+                            "gestureIcon": gesture_icon,
+                            "handDetected": self.hand_detected,
+                            "lastAction": self.ha_client.last_action,
+                            "haConnected": self.ha_client.connected,
+                            "timestamp": datetime.now().isoformat()
+                        })
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Gesture detection error: {e}")
                 
-                # Release on failure
-                if self.cap:
-                    self.cap.release()
-                    self.cap = None
-                
-                # Exponential backoff for reconnection
-                self.reconnect_attempts += 1
-                wait_time = min(30, 2 ** self.reconnect_attempts)
-                logger.info(f"🔄 Reconnecting in {wait_time}s (attempt {self.reconnect_attempts})")
-                
-                for _ in range(wait_time):
-                    if not self.running:
-                        break
-                    time.sleep(1)
-                    
             except Exception as e:
-                logger.error(f"❌ Camera error: {e}")
-                if self.cap:
-                    self.cap.release()
-                    self.cap = None
-                time.sleep(5)
-    
-    def _broadcast_gesture(self, finger_count, gesture_name, gesture_icon):
-        """Broadcast gesture info via Socket.IO"""
-        if self.sio_server:
-            try:
-                self.sio_server.emit("gesture", {
-                    "fingerCount": finger_count,
-                    "gestureName": gesture_name,
-                    "gestureIcon": gesture_icon,
-                    "lastAction": self.ha_client.last_action,
-                    "haConnected": self.ha_client.connected,
-                    "timestamp": datetime.now().isoformat()
-                })
-            except Exception as e:
-                logger.debug(f"Broadcast error: {e}")
-    
-    def _broadcast_status(self, status, message):
-        """Broadcast status via Socket.IO"""
-        if self.sio_server:
-            try:
-                self.sio_server.emit("status", {
-                    "status": status,
-                    "message": message,
-                    "timestamp": datetime.now().isoformat()
-                })
-            except Exception as e:
-                logger.debug(f"Status broadcast error: {e}")
+                logger.error(f"❌ Frame processing error: {e}")
+                time.sleep(0.1)
+        
+        self.cap.release()
+        logger.info("Camera loop ended")
 
 # ========== HTTP SERVER ==========
 class GestureServer:
@@ -440,12 +464,12 @@ class GestureServer:
     
     def __init__(self):
         self.app = aiohttp.web.Application()
-        self.sio = socketio.AsyncServer(cors_allowed_origins="*")
+        self.sio = socketio.AsyncServer(cors_allowed_origins="*", async_mode="aiohttp")
         self.sio.attach(self.app)
         
         self.ha_client = None
         self.gesture_processor = None
-        self.ffmpeg_process = None
+        self.ha_keepalive_task = None
         
         self._setup_routes()
         self._setup_socket_events()
@@ -464,7 +488,8 @@ class GestureServer:
             logger.info(f"🟢 Frontend connected: {sid}")
             await self.sio.emit("status", {
                 "status": "connected",
-                "haConnected": self.ha_client.connected if self.ha_client else False
+                "haConnected": self.ha_client.connected if self.ha_client else False,
+                "message": "Connected to server"
             })
         
         @self.sio.on("disconnect")
@@ -478,7 +503,6 @@ class GestureServer:
     
     async def video_stream(self, request):
         """Stream video from RTSP source with optimized settings"""
-        # FFmpeg command with HEVC/H.264 optimizations
         cmd = [
             "ffmpeg",
             "-rtsp_transport", "tcp",
@@ -495,7 +519,6 @@ class GestureServer:
             "-"
         ]
         
-        # Create response with streaming
         response = aiohttp.web.StreamResponse()
         response.headers["Content-Type"] = "video/mp4"
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
@@ -522,11 +545,9 @@ class GestureServer:
                     logger.info("Client disconnected from video stream")
                     break
             
-            # Read stderr to prevent blocking
             await process.wait()
             
         except asyncio.CancelledError:
-            logger.info("Video stream cancelled")
             if process:
                 process.terminate()
             raise
@@ -549,6 +570,7 @@ class GestureServer:
             "ha_connected": self.ha_client.connected if self.ha_client else False,
             "gesture_running": self.gesture_processor.running if self.gesture_processor else False,
             "current_gesture": self.gesture_processor.current_finger_count if self.gesture_processor else 0,
+            "hand_detected": self.gesture_processor.hand_detected if self.gesture_processor else False,
             "fps": config["fps"],
             "uptime": datetime.now().isoformat()
         })
@@ -565,6 +587,8 @@ class GestureServer:
         logger.info(f"⏱️  Cooldown: {config['cooldown_seconds']}s")
         logger.info(f"🎯 Detection Confidence: {config['detection_confidence']}")
         logger.info(f"🎯 Tracking Confidence: {config['tracking_confidence']}")
+        logger.info(f"📐 Resolution: {config['frame_width']}x{config['frame_height']}")
+        logger.info(f"⚡ Target FPS: {config['fps']}")
         logger.info("=" * 60)
         
         # Initialize HA client
@@ -580,12 +604,13 @@ class GestureServer:
         # Connect to HA
         await self.ha_client.connect()
         
-        # Start background HA keepalive
-        asyncio.create_task(self._ha_keepalive())
-        
         # Start gesture processor in background thread
         self.gesture_processor = GestureProcessor(self.ha_client, self.sio)
+        self.gesture_processor.set_loop(asyncio.get_event_loop())
         self.gesture_processor.start()
+        
+        # Start background HA keepalive
+        self.ha_keepalive_task = asyncio.create_task(self._ha_keepalive())
         
         # Run HTTP server
         runner = aiohttp.web.AppRunner(self.app)
@@ -610,10 +635,11 @@ class GestureServer:
                 logger.info("🔄 Reconnecting to HA...")
                 await self.ha_client.connect()
                 if self.gesture_processor:
-                    self.gesture_processor._broadcast_status(
-                        "ha_reconnected", 
-                        "Connected to Home Assistant"
-                    )
+                    await self.sio.emit("status", {
+                        "status": "ha_reconnected",
+                        "haConnected": self.ha_client.connected,
+                        "message": "Reconnected to Home Assistant"
+                    })
 
 # ========== MAIN ENTRY POINT ==========
 def main():
@@ -626,9 +652,9 @@ def main():
     except Exception as e:
         logger.error(f"❌ Fatal error: {e}")
     finally:
-        if server.gesture_processor:
+        if hasattr(server, 'gesture_processor') and server.gesture_processor:
             server.gesture_processor.stop()
-        if server.ha_client:
+        if hasattr(server, 'ha_client') and server.ha_client:
             asyncio.run(server.ha_client.disconnect())
         logger.info("👋 Goodbye!")
 
