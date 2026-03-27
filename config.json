@@ -3,7 +3,7 @@
   "version": "2.1.0",
   "slug": "gesture_control_rtsp",
   "description": "Control Home Assistant lights with hand gestures via RTSP camera with H.264 live video stream",
-  "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
+  "arch": ["armv7", "aarch64", "amd64"],
   "startup": "application",
   "boot": "auto",
   "host_network": true,

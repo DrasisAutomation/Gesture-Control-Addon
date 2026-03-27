@@ -23,11 +23,15 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Optional: Install hardware acceleration drivers (for Intel/AMD GPUs)
-# Uncomment if you have compatible hardware
+# Alternative: If the above fails, use this simpler version
 # RUN apt-get update && apt-get install -y \
-#     intel-media-va-driver \
-#     vainfo \
+#     libgl1 \
+#     libglib2.0-0 \
+#     libsm6 \
+#     libxext6 \
+#     libxrender1 \
+#     libgomp1 \
+#     ffmpeg \
 #     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
