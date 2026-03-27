@@ -1,6 +1,6 @@
 {
   "name": "Gesture Control for Using CCTV",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "slug": "gesture_control",
   "description": "Control lights using hand gestures via RTSP camera",
   "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
