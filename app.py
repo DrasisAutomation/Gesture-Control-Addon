@@ -470,8 +470,6 @@ class GestureProcessor:
                     try:
                         # Convert to RGB and flip horizontally for mirror effect
                         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                        rgb_frame = cv2.flip(rgb_frame, 1)
-                        
                         # Process with MediaPipe
                         results = hands.process(rgb_frame)
                         
@@ -508,12 +506,14 @@ class GestureProcessor:
                                 
                                 # Only consider stable if confidence is high enough
                                 if confidence >= 0.6:
-                                    if stable != self.current_stable_gesture:
+                                    if (stable != self.current_stable_gesture) or (time.time() - self.last_stable_time > 2):
+
                                         self.current_stable_gesture = stable
                                         self.current_finger_count = stable
-                                        logger.info(f"🎭 Stable gesture detected: {stable} fingers (confidence: {confidence:.2f})")
-                                        
-                                        # Trigger HA action in main thread
+                                        self.last_stable_time = time.time()
+
+                                        logger.info(f"🎭 Stable gesture detected: {stable} fingers")
+
                                         asyncio.run_coroutine_threadsafe(
                                             self.ha_client.handle_gesture(stable),
                                             self.ha_client.loop
