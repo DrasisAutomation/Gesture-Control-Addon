@@ -106,22 +106,20 @@ def count_extended_fingers(landmarks, image_width, image_height):
     fingers = []
 
     # Thumb (more tolerant)
-    if landmarks[4].x < landmarks[3].x - 0.02:
-        fingers.append(1)
+    # Thumb (handle left & right hand properly)
+    is_right_hand = landmarks[5].x < landmarks[17].x
+
+    if is_right_hand:
+        thumb_open = landmarks[4].x < landmarks[3].x - 0.02
     else:
-        fingers.append(0)
+        thumb_open = landmarks[4].x > landmarks[3].x + 0.02
 
-    # Index
-    fingers.append(1 if landmarks[8].y < landmarks[6].y - 0.015 else 0)
+    fingers.append(1 if thumb_open else 0)
 
-    # Middle
-    fingers.append(1 if landmarks[12].y < landmarks[10].y - 0.015 else 0)
-
-    # Ring
-    fingers.append(1 if landmarks[16].y < landmarks[14].y - 0.015 else 0)
-
-    # Pinky (more tolerant for palm)
-    fingers.append(1 if landmarks[20].y < landmarks[18].y - 0.01 else 0)
+    fingers.append(1 if landmarks[8].y < landmarks[6].y - 0.03 else 0)
+    fingers.append(1 if landmarks[12].y < landmarks[10].y - 0.03 else 0)
+    fingers.append(1 if landmarks[16].y < landmarks[14].y - 0.02 else 0)
+    fingers.append(1 if landmarks[20].y < landmarks[18].y - 0.02 else 0)
 
     return sum(fingers)
 
