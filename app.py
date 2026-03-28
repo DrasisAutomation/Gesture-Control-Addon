@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Gesture Control Add-on for Home Assistant
-Enhanced with 5-entity support and improved gesture detection
+Enhanced with 5-entity support, improved palm (5 fingers) detection, and reliable fist detection.
 """
 
 import asyncio
@@ -99,42 +99,78 @@ def init_mediapipe():
     logger.info("✅ MediaPipe initialized")
 
 def count_extended_fingers(landmarks, image_width, image_height):
-    """Count number of extended fingers from hand landmarks"""
+    """
+    Count number of extended fingers from hand landmarks.
+    Improved detection for palm (all fingers extended) and fist (all fingers closed).
+    """
     if not landmarks:
-        return 0
+        return -1  # -1 means no hand detected
     
+    # Helper to check if a finger is extended (tip below PIP joint for most fingers)
+    # For thumb, we use horizontal orientation check
     count = 0
+    finger_tips = [4, 8, 12, 16, 20]  # thumb, index, middle, ring, pinky
+    finger_pips = [3, 6, 10, 14, 18]   # corresponding PIP joints
     
-    # Thumb detection based on hand orientation
+    # For index, middle, ring, pinky: tip Y should be lower (greater Y in image coords)
+    # Since Y increases downward, we compare tip.y < pip.y? Actually, tip should be above pip (smaller y)
+    # In MediaPipe, y=0 is top, y=1 is bottom, so extended finger: tip.y < pip.y
+    for i in range(1, 5):  # index to pinky (indices 1-4 in our loop)
+        tip_idx = finger_tips[i]
+        pip_idx = finger_pips[i]
+        if landmarks[tip_idx].y < landmarks[pip_idx].y - 0.03:
+            count += 1
+    
+    # Thumb detection (horizontal orientation)
+    # Thumb tip should be to the right of IP joint for right hand (x larger) or left for left hand
     is_right_hand = landmarks[5].x < landmarks[17].x
-    
-    # For thumb, check if tip is far from base
     thumb_tip = landmarks[4]
     thumb_ip = landmarks[3]
     if is_right_hand:
-        if thumb_tip.x < thumb_ip.x - 0.03:
-            count += 1
-    else:
         if thumb_tip.x > thumb_ip.x + 0.03:
             count += 1
+    else:
+        if thumb_tip.x < thumb_ip.x - 0.03:
+            count += 1
     
-    # Index finger (tip 8 vs pip 6)
-    if landmarks[8].y < landmarks[6].y - 0.03:
-        count += 1
+    # Special check for Fist (all fingers closed)
+    # All finger tips should be close to or below their PIP joints
+    # Count how many fingers are NOT extended
+    if count == 0:
+        # Double-check: for fist, all tips should be near or below PIP
+        fist_check = True
+        for i in range(1, 5):
+            tip_idx = finger_tips[i]
+            pip_idx = finger_pips[i]
+            if landmarks[tip_idx].y < landmarks[pip_idx].y - 0.02:
+                fist_check = False
+                break
+        thumb_check = True
+        if is_right_hand:
+            if thumb_tip.x > thumb_ip.x + 0.02:
+                thumb_check = False
+        else:
+            if thumb_tip.x < thumb_ip.x - 0.02:
+                thumb_check = False
+        if fist_check and thumb_check:
+            return 0  # Explicitly return 0 for fist
     
-    # Middle finger (tip 12 vs pip 10)
-    if landmarks[12].y < landmarks[10].y - 0.03:
-        count += 1
+    # Special check for Palm (all 5 fingers extended)
+    # Count should be 5 if all fingers are extended
+    if count == 5:
+        # Additional check: all finger tips significantly above PIP
+        palm_check = True
+        for i in range(1, 5):
+            tip_idx = finger_tips[i]
+            pip_idx = finger_pips[i]
+            if not (landmarks[tip_idx].y < landmarks[pip_idx].y - 0.04):
+                palm_check = False
+                break
+        if palm_check:
+            return 5  # Explicitly return 5 for palm
     
-    # Ring finger (tip 16 vs pip 14)
-    if landmarks[16].y < landmarks[14].y - 0.02:
-        count += 1
-    
-    # Pinky (tip 20 vs pip 18)
-    if landmarks[20].y < landmarks[18].y - 0.02:
-        count += 1
-    
-    return count
+    # Also ensure we don't exceed 5
+    return min(count, 5)
 
 def get_gesture_info(finger_count):
     """Return gesture name and icon for finger count"""
@@ -157,7 +193,7 @@ class HAClient:
     def __init__(self, url, token, entities, cooldown_seconds, reset_gesture):
         self.url = url
         self.token = token
-        self.entities = entities  # List of 5 entity IDs
+        self.entities = entities  # Dictionary of 5 entity IDs
         self.cooldown_seconds = cooldown_seconds
         self.reset_gesture = reset_gesture
         
@@ -284,6 +320,27 @@ class HAClient:
             self.connected = False
             return False
     
+    async def turn_off_entity(self, entity_num, entity_id):
+        """Turn off a specific entity"""
+        if not self.connected or not self.ws:
+            return False
+        
+        try:
+            msg_id = int(time.time() * 1000)
+            turn_off_msg = {
+                "id": msg_id,
+                "type": "call_service",
+                "domain": entity_id.split('.')[0],
+                "service": "turn_off",
+                "service_data": {"entity_id": entity_id}
+            }
+            await self.ws.send_json(turn_off_msg)
+            self.entity_states[entity_num] = False
+            return True
+        except Exception as e:
+            logger.error(f"❌ Failed to turn off entity: {e}")
+            return False
+    
     async def reset_gesture_state(self):
         """Reset all entities to OFF"""
         if not self.connected or not self.ws:
@@ -294,16 +351,7 @@ class HAClient:
             for i in range(1, 6):
                 entity_id = self.entities.get(f"entity_{i}", "")
                 if entity_id:
-                    msg_id = int(time.time() * 1000)
-                    turn_off_msg = {
-                        "id": msg_id,
-                        "type": "call_service",
-                        "domain": entity_id.split('.')[0],
-                        "service": "turn_off",
-                        "service_data": {"entity_id": entity_id}
-                    }
-                    await self.ws.send_json(turn_off_msg)
-                    self.entity_states[i] = False
+                    await self.turn_off_entity(i, entity_id)
             
             logger.info("🔄 Reset all entities to OFF")
             self.last_action = "Reset all entities"
@@ -321,13 +369,13 @@ class HAClient:
             
         now = time.time()
         
-        # Cooldown check
+        # Cooldown check (only if same gesture)
         if (self.last_gesture == finger_count and 
             now - self.last_trigger_time < self.cooldown_seconds):
             logger.debug(f"⏱️ Cooldown active for gesture: {finger_count}")
             return False
         
-        # Handle reset gesture
+        # Handle reset gesture (fist or configured gesture)
         if finger_count == self.reset_gesture:
             logger.info(f"🎮 Reset gesture detected! Resetting all entities")
             self.last_gesture = finger_count
