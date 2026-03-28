@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Gesture Control Add-on for Home Assistant
-Enhanced with multi-person filtering, improved palm detection, orientation filtering,
-and stable gesture logic.
+Enhanced with relaxed filters and improved detection.
 """
 
 import asyncio
@@ -53,12 +52,12 @@ def load_config():
             "cooldown_seconds": 1,
             "detection_confidence": 0.5,
             "tracking_confidence": 0.5,
-            "reset_gesture": 0,  # Not used now, fist does nothing
+            "reset_gesture": 0,
             "stability_frames": 5,
-            "center_region_size": 0.3,  # 30% of frame from center
-            "hand_orientation_threshold": 30,  # degrees from vertical
-            "movement_threshold": 0.05,  # hand movement threshold
-            "stationary_frames": 10,  # frames hand must be stationary
+            "center_region_size": 0.6,        # MUCH LARGER detection area
+            "hand_orientation_threshold": 65,  # Allow tilt
+            "movement_threshold": 0.15,        # Allow movement
+            "stationary_frames": 4,            # Faster detection
         }
     
     # Ensure all keys exist
@@ -72,10 +71,10 @@ def load_config():
         "tracking_confidence": 0.5,
         "reset_gesture": 0,
         "stability_frames": 5,
-        "center_region_size": 0.3,
-        "hand_orientation_threshold": 30,
-        "movement_threshold": 0.05,
-        "stationary_frames": 10,
+        "center_region_size": 0.6,
+        "hand_orientation_threshold": 65,
+        "movement_threshold": 0.15,
+        "stationary_frames": 4,
     }
     for key, value in defaults.items():
         if key not in config:
@@ -101,7 +100,7 @@ def init_mediapipe():
     global hands
     hands = mp_hands.Hands(
         static_image_mode=False,
-        max_num_hands=2,  # Allow up to 2 hands for selection
+        max_num_hands=2,
         min_detection_confidence=config["detection_confidence"],
         min_tracking_confidence=config["tracking_confidence"],
         model_complexity=0
@@ -113,38 +112,28 @@ def calculate_hand_orientation(landmarks):
     Calculate hand orientation angle from vertical.
     Returns angle in degrees (0 = vertical upward, 90 = horizontal)
     """
-    # Use wrist (0) and middle finger MCP (9) to get hand direction vector
     wrist = landmarks[0]
     middle_base = landmarks[9]
     
-    # Vector from wrist to middle finger base
     dx = middle_base.x - wrist.x
     dy = middle_base.y - wrist.y
     
-    # Calculate angle from vertical (pointing up)
-    # Vertical vector is (0, -1) in image coordinates (y increases downward)
-    # So we need to handle coordinate system: y increases downward
-    # For upward orientation, wrist should be below fingers (dy negative)
     angle = math.degrees(math.atan2(abs(dx), abs(dy)))
     
     # Check if hand is facing upward (fingers above wrist)
-    # In image coordinates, fingers have lower y than wrist
     finger_y_avg = sum(landmarks[i].y for i in [8, 12, 16, 20]) / 4
     wrist_y = wrist.y
     
     if finger_y_avg > wrist_y:
-        # Hand is pointing downward, not valid
-        return 180
+        return 180  # Hand pointing downward
     
     return angle
 
 def is_hand_in_center(landmarks, frame_width, frame_height, center_region_size):
     """Check if hand's center is within the center region of the frame"""
-    # Calculate hand center (average of all landmarks)
     hand_center_x = sum(lm.x for lm in landmarks) / len(landmarks)
     hand_center_y = sum(lm.y for lm in landmarks) / len(landmarks)
     
-    # Define center region bounds
     region_min_x = 0.5 - (center_region_size / 2)
     region_max_x = 0.5 + (center_region_size / 2)
     region_min_y = 0.5 - (center_region_size / 2)
@@ -156,7 +145,7 @@ def is_hand_in_center(landmarks, frame_width, frame_height, center_region_size):
 def calculate_hand_movement(prev_landmarks, curr_landmarks):
     """Calculate average movement distance between two hand positions"""
     if prev_landmarks is None or curr_landmarks is None:
-        return 1.0  # Large movement if no previous data
+        return 1.0
     
     total_distance = 0
     for i in range(min(len(prev_landmarks), len(curr_landmarks))):
@@ -169,8 +158,7 @@ def calculate_hand_movement(prev_landmarks, curr_landmarks):
 def count_extended_fingers(landmarks, image_width, image_height):
     """
     Count number of extended fingers from hand landmarks.
-    Improved detection for palm (all fingers extended) using better thresholds.
-    Reference from test.html which works correctly.
+    Using proven logic from test.html
     """
     if not landmarks:
         return -1
@@ -193,7 +181,7 @@ def count_extended_fingers(landmarks, image_width, image_height):
     if landmarks[20].y < landmarks[18].y - 0.02:
         count += 1
     
-    # Thumb detection (horizontal position based on hand orientation)
+    # Thumb detection
     is_right_hand = landmarks[5].x < landmarks[17].x
     if is_right_hand:
         if landmarks[4].x < landmarks[3].x - 0.02:
@@ -206,13 +194,11 @@ def count_extended_fingers(landmarks, image_width, image_height):
 
 def is_valid_palm(landmarks):
     """
-    Enhanced palm detection that correctly identifies full palm (5 fingers extended)
+    Enhanced palm detection - uses same logic as test.html
     """
-    # Count fingers using the improved method
     finger_count = 0
     
-    # Check all four fingers (index, middle, ring, pinky)
-    # More generous threshold for palm detection
+    # Check all four fingers
     if landmarks[8].y < landmarks[6].y - 0.02:
         finger_count += 1
     if landmarks[12].y < landmarks[10].y - 0.02:
@@ -222,7 +208,7 @@ def is_valid_palm(landmarks):
     if landmarks[20].y < landmarks[18].y - 0.015:
         finger_count += 1
     
-    # Thumb detection - more generous for palm
+    # Thumb detection
     is_right_hand = landmarks[5].x < landmarks[17].x
     thumb_extended = False
     if is_right_hand:
@@ -235,14 +221,13 @@ def is_valid_palm(landmarks):
     if thumb_extended:
         finger_count += 1
     
-    # Check spread between fingers (palm should have fingers spread apart)
-    # Calculate spread between index and pinky
+    # Check spread between fingers
     index_tip = landmarks[8]
     pinky_tip = landmarks[20]
     finger_spread = abs(index_tip.x - pinky_tip.x)
     
-    # Palm is true if all 5 fingers are extended AND fingers are spread
-    if finger_count == 5 and finger_spread > 0.15:
+    # Palm if all 5 fingers extended AND spread
+    if finger_count == 5 and finger_spread > 0.12:
         return True, 5
     
     return False, finger_count
@@ -278,9 +263,7 @@ class HAClient:
         self.last_trigger_time = 0
         self.last_action = ""
         self.loop = None
-        self.reconnect_task = None
         
-        # Track toggled state for each entity
         self.entity_states = {i: False for i in range(1, 6)}
         
     def set_loop(self, loop):
@@ -298,7 +281,6 @@ class HAClient:
             self.ws = await self.session.ws_connect(self.url)
             
             msg = await self.ws.receive_json()
-            logger.info(f"📨 HA initial message: {msg.get('type')}")
             
             if msg.get("type") != "auth_required":
                 logger.error(f"❌ Expected auth_required, got: {msg}")
@@ -309,26 +291,14 @@ class HAClient:
                 "type": "auth",
                 "access_token": self.token
             }
-            logger.info("🔐 Sending authentication...")
             await self.ws.send_json(auth_msg)
             
             msg = await self.ws.receive_json()
-            logger.info(f"📨 HA auth response: {msg.get('type')}")
             
             if msg.get("type") == "auth_ok":
                 self.connected = True
                 logger.info("✅ HA WebSocket connected and authenticated")
-                
-                for i in range(1, 6):
-                    entity_id = self.entities.get(f"entity_{i}", "")
-                    if entity_id:
-                        await self.subscribe_to_entity(entity_id)
-                
                 return True
-            elif msg.get("type") == "auth_invalid":
-                logger.error(f"❌ HA auth invalid: {msg.get('message', 'Invalid token')}")
-                self.connected = False
-                return False
             else:
                 logger.error(f"❌ HA auth failed: {msg}")
                 self.connected = False
@@ -339,27 +309,9 @@ class HAClient:
             self.connected = False
             return False
     
-    async def subscribe_to_entity(self, entity_id):
-        """Subscribe to entity state changes"""
-        if not self.connected or not self.ws:
-            return
-        
-        try:
-            msg_id = int(time.time() * 1000)
-            subscribe_msg = {
-                "id": msg_id,
-                "type": "subscribe_events",
-                "event_type": "state_changed"
-            }
-            await self.ws.send_json(subscribe_msg)
-            logger.info(f"📡 Subscribed to state changes for {entity_id}")
-        except Exception as e:
-            logger.error(f"❌ Failed to subscribe: {e}")
-    
     async def toggle_entity(self, entity_num, entity_id):
-        """Toggle an entity (on/off)"""
+        """Toggle an entity"""
         if not self.connected or not self.ws:
-            logger.warning("⚠️ Not connected to HA, cannot toggle entity")
             return False
         
         try:
@@ -387,25 +339,22 @@ class HAClient:
             return False
     
     async def handle_gesture(self, finger_count):
-        """Handle gesture and trigger HA actions with cooldown"""
+        """Handle gesture with cooldown - Fist (0) does nothing"""
         if not self.connected:
-            logger.debug(f"⚠️ Not connected to HA, ignoring gesture: {finger_count} fingers")
             return False
-            
-        # Fist (0 fingers) does nothing - no action
+        
+        # Fist does nothing
         if finger_count == 0:
-            logger.debug("Fist detected - no action (fist disabled)")
             return False
-            
+        
         now = time.time()
         
-        # Cooldown check (only if same gesture)
+        # Cooldown check
         if (self.last_gesture == finger_count and 
             now - self.last_trigger_time < self.cooldown_seconds):
-            logger.debug(f"⏱️ Cooldown active for gesture: {finger_count}")
             return False
         
-        # Handle toggle gestures (1-5 fingers)
+        # Handle 1-5 fingers
         if 1 <= finger_count <= 5:
             entity_key = f"entity_{finger_count}"
             entity_id = self.entities.get(entity_key, "")
@@ -416,9 +365,6 @@ class HAClient:
                 self.last_trigger_time = now
                 await self.toggle_entity(finger_count, entity_id)
                 return True
-            else:
-                logger.warning(f"⚠️ No entity configured for {finger_count} finger(s)")
-                return False
         
         return False
     
@@ -432,7 +378,7 @@ class HAClient:
 
 # ========== RTSP PROCESSING THREAD ==========
 class GestureProcessor:
-    """Handles RTSP stream reading and gesture detection with improved stability"""
+    """Handles RTSP stream reading and gesture detection with RELAXED filters"""
     
     def __init__(self, ha_client, sio_server):
         self.ha_client = ha_client
@@ -446,15 +392,12 @@ class GestureProcessor:
         self.current_stable_gesture = None
         self.current_finger_count = 0
         self.hand_detected = False
-        self.last_stable_time = 0
-        self.stability_counter = 0
         
-        # Hand tracking for movement filtering
+        # Hand tracking
         self.prev_landmarks = None
         self.stationary_counter = 0
-        self.hand_position_history = deque(maxlen=config["stationary_frames"])
         
-        # Debug counters
+        # Debug
         self.frame_count = 0
         self.detection_count = 0
         self.last_debug_time = time.time()
@@ -463,10 +406,7 @@ class GestureProcessor:
         self.current_fps = 0
         self.processing_time = 0
         
-        # Async event loop reference
         self.loop = None
-        
-        # Track if gesture was already triggered
         self.last_triggered_gesture = None
         self.trigger_frame_counter = 0
         
@@ -499,10 +439,7 @@ class GestureProcessor:
     
     def _select_best_hand(self, multi_hand_landmarks, frame_shape):
         """
-        Select the best hand to track based on:
-        1. Hand in center region
-        2. Hand orientation (prefer upward facing)
-        Returns selected hand landmarks or None
+        Select best hand with RELAXED filtering - penalize but don't reject
         """
         if not multi_hand_landmarks:
             return None
@@ -513,28 +450,33 @@ class GestureProcessor:
         for hand_landmarks in multi_hand_landmarks:
             landmarks = hand_landmarks.landmark
             
-            # Check if hand is in center region
-            if not is_hand_in_center(landmarks, frame_shape[1], frame_shape[0], 
-                                     config["center_region_size"]):
-                continue
-            
-            # Check hand orientation (must be upward)
-            orientation = calculate_hand_orientation(landmarks)
-            if orientation > config["hand_orientation_threshold"]:
-                continue
-            
-            # Calculate score: center proximity + orientation
+            # Calculate center score (higher is better)
             hand_center_x = sum(lm.x for lm in landmarks) / len(landmarks)
             hand_center_y = sum(lm.y for lm in landmarks) / len(landmarks)
             center_distance = abs(hand_center_x - 0.5) + abs(hand_center_y - 0.5)
-            center_score = 1 - (center_distance / 0.5)
-            orientation_score = 1 - (orientation / 90)
+            center_score = 1 - min(center_distance / 0.5, 1.0)
             
-            total_score = center_score * 0.6 + orientation_score * 0.4
+            # Calculate orientation score
+            orientation = calculate_hand_orientation(landmarks)
+            orientation_penalty = 0
+            
+            # RELAXED: Only apply penalty if orientation exceeds threshold, don't reject
+            if orientation > config["hand_orientation_threshold"]:
+                orientation_penalty = 0.3  # Reduce score, but don't reject
+                orientation_score = max(0, 1 - (orientation - config["hand_orientation_threshold"]) / 90)
+            else:
+                orientation_score = 1 - (orientation / config["hand_orientation_threshold"])
+            
+            # Calculate total score
+            total_score = (center_score * 0.6 + orientation_score * 0.4) - orientation_penalty
             
             if total_score > best_score:
                 best_score = total_score
                 best_hand = landmarks
+        
+        # DEBUG: Log when hand is found
+        if best_hand and best_score < 0.3:
+            logger.debug(f"⚠️ Low scoring hand: {best_score:.2f}")
         
         return best_hand
     
@@ -545,20 +487,21 @@ class GestureProcessor:
         
         if self.prev_landmarks is None:
             self.prev_landmarks = current_landmarks
-            return False
+            return True  # First frame counts as stationary
         
         movement = calculate_hand_movement(self.prev_landmarks, current_landmarks)
         
         if movement < config["movement_threshold"]:
             self.stationary_counter += 1
         else:
-            self.stationary_counter = 0
-        
+            self.stationary_counter = max(0, self.stationary_counter - 1)  # Slowly decay
+            
         self.prev_landmarks = current_landmarks
+        
         return self.stationary_counter >= config["stationary_frames"]
     
     def _process_loop(self):
-        """Main processing loop in separate thread"""
+        """Main processing loop with RELAXED detection"""
         global hands
         if hands is None:
             init_mediapipe()
@@ -575,7 +518,6 @@ class GestureProcessor:
             })
             return
         
-        # Set properties
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
         self.cap.set(cv2.CAP_PROP_FPS, config["fps"])
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, config["frame_width"])
@@ -594,14 +536,12 @@ class GestureProcessor:
             try:
                 frame_start = time.time()
                 
-                # Read frame
                 ret, frame = self.cap.read()
                 if not ret:
-                    logger.warning("⚠️ Failed to read frame")
                     time.sleep(0.05)
                     continue
                 
-                # Calculate FPS
+                # FPS calculation
                 self.fps_counter += 1
                 current_time = time.time()
                 if current_time - self.last_fps_time >= 1.0:
@@ -611,25 +551,24 @@ class GestureProcessor:
                 
                 self.frame_count += 1
                 
-                # Debug every 200 frames
-                if self.frame_count % 200 == 0:
-                    elapsed = time.time() - self.last_debug_time
-                    logger.info(f"📊 Stats: FPS: {self.current_fps}, Processing: {self.processing_time*1000:.1f}ms, Detections: {self.detection_count}, Hand: {self.hand_detected}, Gesture: {self.current_stable_gesture}, HA: {'✓' if self.ha_client.connected else '✗'}")
-                    self.last_debug_time = time.time()
-                    self.detection_count = 0
+                # Debug every 100 frames
+                if self.frame_count % 100 == 0:
+                    logger.info(f"📊 FPS: {self.current_fps}, Hand: {self.hand_detected}, Gesture: {self.current_stable_gesture}, HA: {'✓' if self.ha_client.connected else '✗'}")
                 
-                # Process frame
                 frame_skip_counter += 1
                 if frame_skip_counter >= process_every_n:
                     frame_skip_counter = 0
                     
                     try:
-                        # Convert to RGB and flip horizontally for mirror effect
                         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         rgb_frame = cv2.flip(rgb_frame, 1)
                         
-                        # Process with MediaPipe
                         results = hands.process(rgb_frame)
+                        
+                        # DEBUG: Log hand detection count
+                        hand_count = len(results.multi_hand_landmarks) if results.multi_hand_landmarks else 0
+                        if hand_count > 0 and self.frame_count % 30 == 0:
+                            logger.info(f"🔍 Hands detected in frame: {hand_count}")
                         
                         finger_count = 0
                         self.hand_detected = False
@@ -637,17 +576,17 @@ class GestureProcessor:
                         is_stationary = False
                         
                         if results.multi_hand_landmarks:
-                            # Select best hand based on position and orientation
+                            # Select best hand with relaxed filtering
                             hand_landmarks = self._select_best_hand(results.multi_hand_landmarks, frame.shape)
                             
                             if hand_landmarks:
                                 self.hand_detected = True
                                 self.detection_count += 1
                                 
-                                # Check if hand is stationary
+                                # Check stationary
                                 is_stationary = self._is_hand_stationary(hand_landmarks)
                                 
-                                # Check if it's a valid palm
+                                # Detect gesture
                                 is_palm, palm_fingers = is_valid_palm(hand_landmarks)
                                 
                                 if is_palm:
@@ -657,50 +596,36 @@ class GestureProcessor:
                                                                           frame.shape[1], 
                                                                           frame.shape[0])
                                 
-                                # Log detection occasionally
-                                if self.detection_count % 30 == 0:
-                                    orientation = calculate_hand_orientation(hand_landmarks)
-                                    logger.info(f"✋ Hand detected - {finger_count} fingers, orientation: {orientation:.1f}°, stationary: {is_stationary}")
+                                # DEBUG: Log when gesture changes
+                                if self.detection_count % 20 == 0:
+                                    logger.info(f"✋ Gesture: {finger_count} fingers, stationary: {is_stationary}")
                         
-                        # Only process gestures if hand is stationary
-                        if self.hand_detected and is_stationary:
-                            # Update gesture history
+                        # Process gesture if hand detected
+                        if self.hand_detected:
                             self.gesture_history.append(finger_count)
                             
-                            # Find stable gesture
                             if len(self.gesture_history) == self.gesture_history.maxlen:
-                                # Count valid gestures
                                 valid_gestures = [g for g in self.gesture_history if g >= 0]
                                 if valid_gestures:
-                                    # Get most common valid gesture
                                     gesture_counts = Counter(valid_gestures)
                                     most_common = gesture_counts.most_common(1)[0]
                                     stable = most_common[0]
                                     confidence = most_common[1] / len(self.gesture_history)
                                     
-                                    # Only consider stable if confidence is high enough
-                                    if confidence >= 0.6:
+                                    # Only trigger if hand is stationary and confidence is high
+                                    if is_stationary and confidence >= 0.6:
                                         if stable != self.current_stable_gesture:
                                             self.current_stable_gesture = stable
                                             self.current_finger_count = stable
-                                            self.trigger_frame_counter = 0
-                                            logger.info(f"🎭 Stable gesture detected: {stable} fingers (confidence: {confidence:.2f})")
+                                            logger.info(f"🎭 Stable gesture: {stable} fingers (confidence: {confidence:.2f})")
                                             
-                                            # Trigger HA action only once per stable gesture
-                                            if stable != self.last_triggered_gesture:
-                                                self.last_triggered_gesture = stable
-                                                asyncio.run_coroutine_threadsafe(
-                                                    self.ha_client.handle_gesture(stable),
-                                                    self.ha_client.loop
-                                                )
-                                            else:
-                                                # Increment trigger frame counter to prevent repeated triggers
-                                                self.trigger_frame_counter += 1
-                                                if self.trigger_frame_counter > 10:
-                                                    self.last_triggered_gesture = None
-                                                    self.trigger_frame_counter = 0
+                                            # Trigger action
+                                            asyncio.run_coroutine_threadsafe(
+                                                self.ha_client.handle_gesture(stable),
+                                                self.ha_client.loop
+                                            )
                                             
-                                            # Emit gesture event
+                                            # Emit event
                                             gesture_info = get_gesture_info(stable)
                                             self._emit_async("gesture", {
                                                 "fingerCount": stable,
@@ -710,7 +635,7 @@ class GestureProcessor:
                                                 "lastAction": self.ha_client.last_action,
                                                 "haConnected": self.ha_client.connected,
                                                 "confidence": confidence,
-                                                "stationary": True,
+                                                "stationary": is_stationary,
                                                 "timestamp": datetime.now().isoformat()
                                             })
                                         else:
@@ -718,30 +643,19 @@ class GestureProcessor:
                                     else:
                                         self.current_finger_count = self.current_stable_gesture if self.current_stable_gesture is not None else 0
                                 else:
-                                    # No valid gesture
                                     if self.current_stable_gesture is not None:
-                                        logger.info("👋 Hand removed or invalid")
                                         self.current_stable_gesture = None
-                                        self.last_triggered_gesture = None
                                     self.current_finger_count = 0
-                                    self.hand_detected = False
                         else:
-                            # Hand not stationary or no hand detected
-                            if self.hand_detected and not is_stationary:
-                                # Hand moving - reset stable gesture
-                                if self.current_stable_gesture is not None:
-                                    self.current_stable_gesture = None
-                                    self.last_triggered_gesture = None
-                                    logger.debug("Hand moving - resetting gesture")
-                            
-                            # Clear history when hand is not stationary
-                            if not self.hand_detected or not is_stationary:
-                                self.gesture_history.clear()
+                            # No hand detected - reset
+                            if self.current_stable_gesture is not None:
                                 self.current_stable_gesture = None
-                                self.current_finger_count = 0
-                                self.stationary_counter = 0
+                            self.current_finger_count = 0
+                            self.gesture_history.clear()
+                            self.stationary_counter = 0
+                            self.prev_landmarks = None
                         
-                        # Broadcast current state for UI
+                        # Broadcast UI update
                         if self.hand_detected and self.current_finger_count >= 0:
                             gesture_info = get_gesture_info(self.current_finger_count)
                             gesture_name = gesture_info["name"]
@@ -752,29 +666,27 @@ class GestureProcessor:
                             self.current_finger_count = 0
                         
                         self._emit_async("gesture_update", {
-                            "fingerCount": self.current_finger_count if self.hand_detected else 0,
+                            "fingerCount": self.current_finger_count,
                             "gestureName": gesture_name,
                             "gestureIcon": gesture_icon,
                             "handDetected": self.hand_detected,
-                            "stationary": is_stationary,
+                            "stationary": is_stationary if self.hand_detected else False,
                             "lastAction": self.ha_client.last_action,
                             "haConnected": self.ha_client.connected,
                             "timestamp": datetime.now().isoformat(),
-                            "entityStates": self.ha_client.entity_states if self.ha_client else {}
+                            "entityStates": self.ha_client.entity_states
                         })
                         
                     except Exception as e:
-                        logger.error(f"❌ Gesture detection error: {e}")
+                        logger.error(f"❌ Detection error: {e}")
                 
-                # Calculate processing time
+                # Control processing rate to prevent CPU issues
                 self.processing_time = time.time() - frame_start
-                
-                # Ensure we're not processing too fast to prevent CPU issues
                 if self.processing_time < 0.01:
                     time.sleep(0.005)
                 
             except Exception as e:
-                logger.error(f"❌ Frame processing error: {e}")
+                logger.error(f"❌ Frame error: {e}")
                 time.sleep(0.05)
         
         self.cap.release()
@@ -836,7 +748,7 @@ class GestureServer:
         return aiohttp.web.FileResponse(index_path)
     
     async def video_stream(self, request):
-        """Stream video from RTSP source with optimized settings"""
+        """Stream video from RTSP source"""
         cmd = [
             "ffmpeg",
             "-rtsp_transport", "tcp",
@@ -876,7 +788,6 @@ class GestureServer:
                 try:
                     await response.write(chunk)
                 except (ConnectionResetError, BrokenPipeError):
-                    logger.info("Client disconnected from video stream")
                     break
             
             await process.wait()
@@ -890,10 +801,6 @@ class GestureServer:
         finally:
             if process and process.returncode is None:
                 process.terminate()
-                try:
-                    await process.wait()
-                except:
-                    pass
         
         return response
     
@@ -902,14 +809,9 @@ class GestureServer:
         return aiohttp.web.json_response({
             "status": "ok",
             "ha_connected": self.ha_client.connected if self.ha_client else False,
-            "ha_url": self.ha_client.url if self.ha_client else None,
             "gesture_running": self.gesture_processor.running if self.gesture_processor else False,
-            "current_gesture": self.gesture_processor.current_finger_count if self.gesture_processor else 0,
             "hand_detected": self.gesture_processor.hand_detected if self.gesture_processor else False,
-            "hand_stationary": self.gesture_processor.stationary_counter >= config["stationary_frames"] if self.gesture_processor else False,
-            "fps": config["fps"],
             "current_fps": self.gesture_processor.current_fps if self.gesture_processor else 0,
-            "processing_time_ms": self.gesture_processor.processing_time * 1000 if self.gesture_processor else 0,
             "uptime": datetime.now().isoformat()
         })
     
@@ -917,13 +819,8 @@ class GestureServer:
         """Get configuration endpoint"""
         return aiohttp.web.json_response({
             "fps": config["fps"],
-            "frame_width": config["frame_width"],
-            "frame_height": config["frame_height"],
             "cooldown_seconds": config["cooldown_seconds"],
             "detection_confidence": config["detection_confidence"],
-            "tracking_confidence": config["tracking_confidence"],
-            "reset_gesture": config["reset_gesture"],
-            "stability_frames": config["stability_frames"],
             "center_region_size": config["center_region_size"],
             "hand_orientation_threshold": config["hand_orientation_threshold"],
             "movement_threshold": config["movement_threshold"],
@@ -938,31 +835,17 @@ class GestureServer:
         })
     
     async def start(self):
-        """Start the server and initialize components"""
-        # Print startup banner
+        """Start the server"""
         logger.info("=" * 60)
-        logger.info("🎮 Starting Gesture Control Add-on v2.1 (Enhanced)")
+        logger.info("🎮 Starting Gesture Control Add-on v2.2 (RELAXED DETECTION)")
         logger.info("=" * 60)
-        logger.info(f"📹 RTSP URL: {'✅ Configured' if config['rtsp_url'] != 'rtsp://your-camera-ip:554/stream' else '⚠️ Using default'}")
-        logger.info(f"💡 Entity 1: {config.get('entity_1', 'Not configured')}")
-        logger.info(f"💡 Entity 2: {config.get('entity_2', 'Not configured')}")
-        logger.info(f"💡 Entity 3: {config.get('entity_3', 'Not configured')}")
-        logger.info(f"💡 Entity 4: {config.get('entity_4', 'Not configured')}")
-        logger.info(f"💡 Entity 5: {config.get('entity_5', 'Not configured')}")
-        logger.info(f"⏱️  Cooldown: {config['cooldown_seconds']}s")
-        logger.info(f"🎯 Detection Confidence: {config['detection_confidence']}")
-        logger.info(f"🎯 Tracking Confidence: {config['tracking_confidence']}")
-        logger.info(f"📐 Resolution: {config['frame_width']}x{config['frame_height']}")
-        logger.info(f"⚡ Target FPS: {config['fps']}")
-        logger.info(f"🎯 Center Region: {config['center_region_size']*100}% from center")
-        logger.info(f"🎯 Orientation Threshold: {config['hand_orientation_threshold']}° from vertical")
+        logger.info(f"📹 RTSP: {config['rtsp_url'][:50]}...")
+        logger.info(f"🎯 Center Region: {config['center_region_size']*100}%")
+        logger.info(f"🎯 Orientation Threshold: {config['hand_orientation_threshold']}°")
         logger.info(f"🎯 Movement Threshold: {config['movement_threshold']}")
         logger.info(f"🎯 Stationary Frames: {config['stationary_frames']}")
-        logger.info(f"🔌 HA URL: {config['ha_url']}")
-        logger.info(f"🔑 HA Token: {config['ha_token'][:20]}..." if config['ha_token'] else "⚠️ No token set")
         logger.info("=" * 60)
         
-        # Initialize HA client
         entities = {
             "entity_1": config.get("entity_1", ""),
             "entity_2": config.get("entity_2", ""),
@@ -980,56 +863,41 @@ class GestureServer:
         )
         self.ha_client.set_loop(asyncio.get_event_loop())
         
-        # Connect to HA
         connected = await self.ha_client.connect()
         if not connected:
-            logger.error("❌ Failed to connect to HA! Check your token and URL")
+            logger.error("❌ Failed to connect to HA!")
         
-        # Start gesture processor
         self.gesture_processor = GestureProcessor(self.ha_client, self.sio)
         self.gesture_processor.set_loop(asyncio.get_event_loop())
         self.gesture_processor.start()
         
-        # Start background HA keepalive
         self.ha_keepalive_task = asyncio.create_task(self._ha_keepalive())
         
-        # Run HTTP server
         runner = aiohttp.web.AppRunner(self.app)
         await runner.setup()
         site = aiohttp.web.TCPSite(runner, "0.0.0.0", 8099)
         await site.start()
         
-        logger.info("=" * 60)
         logger.info("🌐 Web server started on port 8099")
-        logger.info("📍 Access the UI at: http://[YOUR-IP]:8099/")
-        logger.info("🔍 Health check: http://[YOUR-IP]:8099/health")
         logger.info("=" * 60)
         
-        # Keep running
         await asyncio.Event().wait()
     
     async def _ha_keepalive(self):
-        """Keep HA connection alive and reconnect if needed"""
+        """Keep HA connection alive"""
         while True:
             await asyncio.sleep(30)
             if self.ha_client and not self.ha_client.connected:
                 logger.info("🔄 Reconnecting to HA...")
                 await self.ha_client.connect()
-                if self.gesture_processor:
-                    await self.sio.emit("status", {
-                        "status": "ha_reconnected",
-                        "haConnected": self.ha_client.connected,
-                        "message": "Reconnected to Home Assistant"
-                    })
 
-# ========== MAIN ENTRY POINT ==========
 def main():
     """Main entry point"""
     server = GestureServer()
     try:
         asyncio.run(server.start())
     except KeyboardInterrupt:
-        logger.info("\n🛑 Shutting down gracefully...")
+        logger.info("\n🛑 Shutting down...")
     except Exception as e:
         logger.error(f"❌ Fatal error: {e}")
     finally:
