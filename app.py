@@ -52,7 +52,7 @@ def load_config():
             "detection_confidence": 0.5,
             "tracking_confidence": 0.5,
             "reset_gesture": 0,
-            "stability_frames": 7,  # Increased from 5 for better stability
+            "stability_frames": 5,
         }
     
     # Ensure all keys exist
@@ -65,7 +65,7 @@ def load_config():
         "detection_confidence": 0.5,
         "tracking_confidence": 0.5,
         "reset_gesture": 0,
-        "stability_frames": 7,
+        "stability_frames": 5,
     }
     for key, value in defaults.items():
         if key not in config:
@@ -94,26 +94,26 @@ def init_mediapipe():
         max_num_hands=1,
         min_detection_confidence=config["detection_confidence"],
         min_tracking_confidence=config["tracking_confidence"],
-        model_complexity=1  # Increased from 0 for better accuracy
+        model_complexity=0
     )
     logger.info("✅ MediaPipe initialized")
 
 def count_extended_fingers(landmarks, image_width, image_height):
-    """Improved finger counting (more accurate palm detection)"""
+    """Improved finger detection (same as test.html - fixes palm)"""
     if not landmarks:
         return 0
 
     count = 0
 
-    # Index finger
+    # Index
     if landmarks[8].y < landmarks[6].y - 0.03:
         count += 1
 
-    # Middle finger
+    # Middle
     if landmarks[12].y < landmarks[10].y - 0.03:
         count += 1
 
-    # Ring finger
+    # Ring
     if landmarks[16].y < landmarks[14].y - 0.02:
         count += 1
 
@@ -121,7 +121,7 @@ def count_extended_fingers(landmarks, image_width, image_height):
     if landmarks[20].y < landmarks[18].y - 0.02:
         count += 1
 
-    # Thumb detection
+    # Thumb (HTML logic)
     is_right_hand = landmarks[5].x < landmarks[17].x
 
     if is_right_hand:
@@ -133,30 +133,10 @@ def count_extended_fingers(landmarks, image_width, image_height):
 
     return count
 
-def is_hand_facing_up(landmarks):
-    """Detect if hand is upright (ignore left/right/down gestures)"""
-    if not landmarks:
-        return False
-    
-    wrist = landmarks[0]
-    middle_tip = landmarks[12]
-    
-    # Only accept if fingers are above wrist
-    return middle_tip.y < wrist.y
-
-def fix_palm_misdetection(finger_count, landmarks):
-    """Fix palm being misdetected as 4 fingers"""
-    if finger_count == 4 and landmarks:
-        # Check if all fingers are extended (palm)
-        tips = [landmarks[8], landmarks[12], landmarks[16], landmarks[20]]
-        if all(tip.y < landmarks[0].y for tip in tips):
-            return 5
-    return finger_count
-
 def get_gesture_info(finger_count):
     """Return gesture name and icon for finger count"""
     mapping = {
-        0: {"name": "Fist", "icon": "✊", "action": "toggle"},
+        0: {"name": "Fist (Reset)", "icon": "✊", "action": "reset"},
         1: {"name": "1 Finger", "icon": "☝️", "action": "toggle"},
         2: {"name": "2 Fingers", "icon": "✌️", "action": "toggle"},
         3: {"name": "3 Fingers", "icon": "👌", "action": "toggle"},
@@ -344,10 +324,8 @@ class HAClient:
             logger.debug(f"⏱️ Cooldown active for gesture: {finger_count}")
             return False
         
-        # Handle reset gesture - DISABLED (no action on fist)
-        if finger_count == self.reset_gesture:
-            # Fist does nothing now - just return False
-            logger.debug(f"✊ Fist gesture detected - no action (disabled)")
+        # ❌ Disable fist (no action)
+        if finger_count == 0:
             return False
         
         # Handle toggle gestures (1-5 fingers)
@@ -514,27 +492,15 @@ class GestureProcessor:
                             self.hand_detected = True
                             self.detection_count += 1
                             
-                            # Get first hand landmarks
+                            # Get first hand
                             landmarks = results.multi_hand_landmarks[0].landmark
+                            finger_count = count_extended_fingers(landmarks, 
+                                                                  frame.shape[1], 
+                                                                  frame.shape[0])
                             
-                            # 🚫 Ignore sideways/down gestures - only detect upright hand
-                            if not is_hand_facing_up(landmarks):
-                                finger_count = -1
-                                logger.debug("Hand not facing up - ignoring gesture")
-                            else:
-                                # Count fingers
-                                finger_count = count_extended_fingers(
-                                    landmarks, 
-                                    frame.shape[1], 
-                                    frame.shape[0]
-                                )
-                                
-                                # Fix palm misdetection
-                                finger_count = fix_palm_misdetection(finger_count, landmarks)
-                                
-                                # Log detection occasionally
-                                if self.detection_count % 30 == 0:
-                                    logger.info(f"✋ Hand detected - {finger_count} fingers")
+                            # Log detection occasionally
+                            if self.detection_count % 30 == 0:
+                                logger.info(f"✋ Hand detected - {finger_count} fingers")
                         
                         # Update gesture history
                         self.gesture_history.append(finger_count if self.hand_detected else -1)
@@ -550,8 +516,8 @@ class GestureProcessor:
                                 stable = most_common[0]
                                 confidence = most_common[1] / len(self.gesture_history)
                                 
-                                # Only consider stable if confidence is high enough (increased to 0.7)
-                                if confidence >= 0.7:
+                                # Only consider stable if confidence is high enough
+                                if confidence >= 0.6:
                                     if stable != self.current_stable_gesture:
                                         self.current_stable_gesture = stable
                                         self.current_finger_count = stable
@@ -784,7 +750,7 @@ class GestureServer:
         logger.info(f"💡 Entity 3: {config.get('entity_3', 'Not configured')}")
         logger.info(f"💡 Entity 4: {config.get('entity_4', 'Not configured')}")
         logger.info(f"💡 Entity 5: {config.get('entity_5', 'Not configured')}")
-        logger.info(f"🔄 Reset Gesture: {config['reset_gesture']} fingers (DISABLED - fist does nothing)")
+        logger.info(f"🔄 Reset Gesture: {config['reset_gesture']} fingers")
         logger.info(f"⏱️  Cooldown: {config['cooldown_seconds']}s")
         logger.info(f"🎯 Detection Confidence: {config['detection_confidence']}")
         logger.info(f"🎯 Tracking Confidence: {config['tracking_confidence']}")
