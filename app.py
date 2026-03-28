@@ -99,39 +99,31 @@ def init_mediapipe():
     logger.info("✅ MediaPipe initialized")
 
 def count_extended_fingers(landmarks, image_width, image_height):
-    """Improved finger detection (same as test.html - fixes palm)"""
+    """Count number of extended fingers from hand landmarks"""
     if not landmarks:
         return 0
 
-    count = 0
+    fingers = []
+
+    # Thumb (more tolerant)
+    if landmarks[4].x < landmarks[3].x - 0.02:
+        fingers.append(1)
+    else:
+        fingers.append(0)
 
     # Index
-    if landmarks[8].y < landmarks[6].y - 0.03:
-        count += 1
+    fingers.append(1 if landmarks[8].y < landmarks[6].y - 0.015 else 0)
 
     # Middle
-    if landmarks[12].y < landmarks[10].y - 0.03:
-        count += 1
+    fingers.append(1 if landmarks[12].y < landmarks[10].y - 0.015 else 0)
 
     # Ring
-    if landmarks[16].y < landmarks[14].y - 0.02:
-        count += 1
+    fingers.append(1 if landmarks[16].y < landmarks[14].y - 0.015 else 0)
 
-    # Pinky
-    if landmarks[20].y < landmarks[18].y - 0.02:
-        count += 1
+    # Pinky (more tolerant for palm)
+    fingers.append(1 if landmarks[20].y < landmarks[18].y - 0.01 else 0)
 
-    # Thumb (HTML logic)
-    is_right_hand = landmarks[5].x < landmarks[17].x
-
-    if is_right_hand:
-        if landmarks[4].x < landmarks[3].x - 0.02:
-            count += 1
-    else:
-        if landmarks[4].x > landmarks[3].x + 0.02:
-            count += 1
-
-    return count
+    return sum(fingers)
 
 def get_gesture_info(finger_count):
     """Return gesture name and icon for finger count"""
@@ -324,8 +316,8 @@ class HAClient:
             logger.debug(f"⏱️ Cooldown active for gesture: {finger_count}")
             return False
         
-        # ❌ Disable fist (no action)
-        if finger_count == 0:
+        # ❌ Disable reset gesture (fist does nothing)
+        if finger_count == self.reset_gesture:
             return False
         
         # Handle toggle gestures (1-5 fingers)
