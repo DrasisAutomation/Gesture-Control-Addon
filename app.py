@@ -300,11 +300,27 @@ class HAClient:
             self.connected = False
             return False
     
+    async def send_ping(self):
+        """Send ping to keep connection alive"""
+        if not self.connected or not self.ws:
+            return
+        
+        try:
+            await self.ws.ping()
+            logger.debug("💓 Ping sent to HA")
+        except Exception as e:
+            logger.warning(f"⚠️ Ping failed: {e}")
+            self.connected = False
+    
     async def handle_gesture(self, finger_count):
         """Handle gesture and trigger HA actions with cooldown"""
         if not self.connected:
-            logger.debug(f"⚠️ Not connected to HA, ignoring gesture: {finger_count} fingers")
-            return False
+            logger.warning(f"⚠️ HA disconnected → trying reconnect before gesture: {finger_count} fingers")
+            await self.connect()
+            
+            if not self.connected:
+                logger.error(f"❌ Still not connected to HA, ignoring gesture: {finger_count} fingers")
+                return False
             
         now = time.time()
         
@@ -859,13 +875,18 @@ class GestureServer:
         await asyncio.Event().wait()
     
     async def _ha_keepalive(self):
-        """Keep HA connection alive and reconnect if needed"""
+        """Keep HA connection alive + fast reconnect"""
         while True:
-            await asyncio.sleep(30)
-            if self.ha_client and not self.ha_client.connected:
-                logger.info("🔄 Reconnecting to HA...")
-                await self.ha_client.connect()
-                if self.gesture_processor:
+            await asyncio.sleep(5)  # 🔥 faster check (changed from 30 to 5 seconds)
+            
+            if self.ha_client:
+                if self.ha_client.connected:
+                    # 💓 Send ping instead of doing nothing
+                    await self.ha_client.send_ping()
+                else:
+                    logger.warning("🔄 HA disconnected → reconnecting immediately...")
+                    await self.ha_client.connect()
+                    
                     await self.sio.emit("status", {
                         "status": "ha_reconnected",
                         "haConnected": self.ha_client.connected,
