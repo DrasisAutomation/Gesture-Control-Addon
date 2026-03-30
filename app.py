@@ -2,6 +2,13 @@
 """
 Gesture Control Add-on for Home Assistant
 Enhanced with 5-entity support and improved gesture detection
+
+CRITICAL FIXES INCLUDED:
+1. Auto-recover camera on frame failure
+2. MediaPipe stuck reset detection
+3. Force gesture timeout reset when hand disappears
+4. HA trigger safety checks
+5. Memory/CPU optimization with frame delay
 """
 
 import asyncio
@@ -11,10 +18,9 @@ import os
 import subprocess
 import threading
 import time
-from collections import deque
+from collections import deque, Counter
 from datetime import datetime
 from pathlib import Path
-from collections import Counter
 
 import aiohttp
 import aiohttp.web
@@ -99,27 +105,33 @@ def init_mediapipe():
     logger.info("✅ MediaPipe initialized")
 
 def count_extended_fingers(landmarks, image_width, image_height):
-    """Count number of extended fingers from hand landmarks"""
+    """Count how many fingers are extended"""
     if not landmarks:
         return 0
 
     fingers = []
 
-    # Thumb (more tolerant)
-    # Thumb (handle left & right hand properly)
-    is_right_hand = landmarks[5].x < landmarks[17].x
+    # ---------- THUMB (DISTANCE BASED - FIXED) ----------
+    # Distance between thumb tip (4) and index MCP (5)
+    thumb_tip = landmarks[4]
+    index_mcp = landmarks[5]
 
-    if is_right_hand:
-        thumb_open = landmarks[4].x < landmarks[3].x - 0.02
-    else:
-        thumb_open = landmarks[4].x > landmarks[3].x + 0.02
+    dist_thumb_index = ((thumb_tip.x - index_mcp.x) ** 2 + 
+                        (thumb_tip.y - index_mcp.y) ** 2) ** 0.5
 
-    fingers.append(1 if thumb_open else 0)
+    # Distance between wrist (0) and index MCP (5) → reference scale
+    wrist = landmarks[0]
+    dist_ref = ((wrist.x - index_mcp.x) ** 2 + 
+                (wrist.y - index_mcp.y) ** 2) ** 0.5
 
-    fingers.append(1 if landmarks[8].y < landmarks[6].y - 0.03 else 0)
-    fingers.append(1 if landmarks[12].y < landmarks[10].y - 0.03 else 0)
-    fingers.append(1 if landmarks[16].y < landmarks[14].y - 0.02 else 0)
-    fingers.append(1 if landmarks[20].y < landmarks[18].y - 0.02 else 0)
+    # If thumb is far enough → open
+    fingers.append(1 if dist_thumb_index > dist_ref * 0.5 else 0)
+
+    # ---------- OTHER FINGERS ----------
+    fingers.append(1 if landmarks[8].y < landmarks[6].y else 0)   # Index
+    fingers.append(1 if landmarks[12].y < landmarks[10].y else 0) # Middle
+    fingers.append(1 if landmarks[16].y < landmarks[14].y else 0) # Ring
+    fingers.append(1 if landmarks[20].y < landmarks[18].y else 0) # Pinky
 
     return sum(fingers)
 
@@ -139,7 +151,7 @@ def get_gesture_info(finger_count):
 
 # ========== HOME ASSISTANT WEBSOCKET ==========
 class HAClient:
-    """Home Assistant WebSocket Client"""
+    """Home Assistant WebSocket Client with reconnection support"""
     
     def __init__(self, url, token, entities, cooldown_seconds, reset_gesture):
         self.url = url
@@ -302,8 +314,13 @@ class HAClient:
     
     async def handle_gesture(self, finger_count):
         """Handle gesture and trigger HA actions with cooldown"""
+        # FIX 4: HA TRIGGER SAFETY CHECK - Added loop safety
         if not self.connected:
             logger.debug(f"⚠️ Not connected to HA, ignoring gesture: {finger_count} fingers")
+            return False
+            
+        if not self.loop:
+            logger.warning("⚠️ HA loop not available, cannot trigger gesture")
             return False
             
         now = time.time()
@@ -314,7 +331,7 @@ class HAClient:
             logger.debug(f"⏱️ Cooldown active for gesture: {finger_count}")
             return False
         
-        # ❌ Disable reset gesture (fist does nothing)
+        # Disable reset gesture (fist does nothing)
         if finger_count == self.reset_gesture:
             return False
         
@@ -345,7 +362,7 @@ class HAClient:
 
 # ========== RTSP PROCESSING THREAD ==========
 class GestureProcessor:
-    """Handles RTSP stream reading and gesture detection"""
+    """Handles RTSP stream reading and gesture detection with auto-recovery"""
     
     def __init__(self, ha_client, sio_server):
         self.ha_client = ha_client
@@ -369,6 +386,9 @@ class GestureProcessor:
         self.last_fps_time = time.time()
         self.fps_counter = 0
         self.current_fps = 0
+        
+        # MediaPipe stuck detection
+        self.last_detection_frame = 0
         
         # Async event loop reference
         self.loop = None
@@ -400,14 +420,28 @@ class GestureProcessor:
                 self.loop
             )
     
+    def _safe_ha_trigger(self, stable):
+        """Safely trigger HA gesture with loop check"""
+        # FIX 4: HA TRIGGER STOPS - Added safety check
+        if (self.ha_client and 
+            self.ha_client.connected and 
+            self.ha_client.loop):
+            asyncio.run_coroutine_threadsafe(
+                self.ha_client.handle_gesture(stable),
+                self.ha_client.loop
+            )
+        else:
+            logger.warning("⚠️ HA loop not available, gesture not triggered")
+    
     def _process_loop(self):
-        """Main processing loop in separate thread"""
-        # Initialize MediaPipe in this thread
+        """Main processing loop in separate thread with auto-recovery"""
         global hands
+        
+        # Initialize MediaPipe in this thread
         if hands is None:
             init_mediapipe()
         
-        # Open RTSP stream
+        # FIX 1: AUTO-RECOVER CAMERA - Modified connection logic
         logger.info(f"🔌 Connecting to RTSP stream: {config['rtsp_url']}")
         
         self.cap = cv2.VideoCapture(config["rtsp_url"], cv2.CAP_FFMPEG)
@@ -438,12 +472,26 @@ class GestureProcessor:
         
         while self.running:
             try:
-                # Read frame
+                # FIX 1: AUTO-RECOVER CAMERA - Read frame with recovery
                 ret, frame = self.cap.read()
                 if not ret:
-                    logger.warning("⚠️ Failed to read frame")
-                    time.sleep(0.05)
+                    logger.error("❌ Camera frame failed - reconnecting...")
+                    
+                    self.cap.release()
+                    time.sleep(1)
+                    
+                    self.cap = cv2.VideoCapture(config["rtsp_url"], cv2.CAP_FFMPEG)
+                    
+                    if not self.cap.isOpened():
+                        logger.error("❌ Reconnect failed, retrying...")
+                        time.sleep(2)
+                        continue
+                    
+                    logger.info("✅ Camera reconnected")
                     continue
+                
+                # FIX 5: MEMORY/CPU OVERLOAD - Add slight delay
+                time.sleep(0.01)
                 
                 # Calculate FPS
                 self.fps_counter += 1
@@ -476,9 +524,11 @@ class GestureProcessor:
                         finger_count = -1  # -1 means no hand detected
                         self.hand_detected = False
                         
+                        # FIX 2: MEDIA PIPE STUCK RESET
                         if results.multi_hand_landmarks:
                             self.hand_detected = True
                             self.detection_count += 1
+                            self.last_detection_frame = self.frame_count
                             
                             # Get first hand
                             landmarks = results.multi_hand_landmarks[0].landmark
@@ -489,6 +539,19 @@ class GestureProcessor:
                             # Log detection occasionally
                             if self.detection_count % 30 == 0:
                                 logger.info(f"✋ Hand detected - {finger_count} fingers")
+                        else:
+                            # FIX 2: Reset MediaPipe if stuck with no detections
+                            if (self.detection_count == 0 and 
+                                self.frame_count > 200 and
+                                self.frame_count - self.last_detection_frame > 200):
+                                logger.warning("⚠️ No detections for long time → resetting MediaPipe")
+                                
+                                # Close and reinitialize MediaPipe
+                                if hands:
+                                    hands.close()
+                                hands = None
+                                init_mediapipe()
+                                self.last_detection_frame = self.frame_count
                         
                         # Update gesture history
                         self.gesture_history.append(finger_count if self.hand_detected else -1)
@@ -507,17 +570,14 @@ class GestureProcessor:
                                 # Only consider stable if confidence is high enough
                                 if confidence >= 0.6:
                                     if (stable != self.current_stable_gesture) or (time.time() - self.last_stable_time > 2):
-
                                         self.current_stable_gesture = stable
                                         self.current_finger_count = stable
                                         self.last_stable_time = time.time()
 
                                         logger.info(f"🎭 Stable gesture detected: {stable} fingers")
 
-                                        asyncio.run_coroutine_threadsafe(
-                                            self.ha_client.handle_gesture(stable),
-                                            self.ha_client.loop
-                                        )
+                                        # FIX 4: Use safe HA trigger
+                                        self._safe_ha_trigger(stable)
                                         
                                         # Emit gesture event with high confidence
                                         gesture_info = get_gesture_info(stable)
@@ -536,7 +596,7 @@ class GestureProcessor:
                                 else:
                                     self.current_finger_count = self.current_stable_gesture if self.current_stable_gesture is not None else 0
                             else:
-                                # No hand detected
+                                # FIX 3: FORCE GESTURE TIMEOUT RESET
                                 if self.current_stable_gesture is not None:
                                     logger.info("👋 Hand removed from frame")
                                     self.current_stable_gesture = None
@@ -544,6 +604,10 @@ class GestureProcessor:
                                 self.hand_detected = False
                         else:
                             self.current_finger_count = finger_count if self.hand_detected else 0
+                        
+                        # FIX 3: Ensure gesture resets when hand disappears
+                        if not self.hand_detected:
+                            self.current_stable_gesture = None
                         
                         # Broadcast current state for UI
                         if self.hand_detected and self.current_finger_count >= 0:
