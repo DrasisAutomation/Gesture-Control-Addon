@@ -423,7 +423,7 @@ class GestureProcessor:
         return True
     
     def _process_loop(self):
-        """Main processing loop in separate thread"""
+        """Main processing loop in separate thread - STABLE VERSION"""
         # Initialize MediaPipe in this thread
         global hands
         
@@ -455,32 +455,35 @@ class GestureProcessor:
             "message": "Camera connected"
         })
         
-        # Process every 2nd frame for stable CPU usage
-        process_every_n = 2  # FIXED: More stable than dynamic calculation
-        frame_skip_counter = 0
         reconnect_attempts = 0
+        frames_without_detection = 0
         
         while self.running:
             try:
-                # Drop old frames to prevent lag (FRAME FRESHNESS FIX)
-                for _ in range(2):
-                    self.cap.grab()
-                
-                # Read frame
+                # SIMPLE FRAME READ - NO GRAB() CORRUPTION
                 ret, frame = self.cap.read()
+                
                 if not ret:
                     # AUTO-RECOVERY: Reconnect camera on failure
                     reconnect_attempts += 1
                     if reconnect_attempts >= 3:
-                        if self._reconnect_camera():
+                        logger.warning("⚠️ Reconnecting camera...")
+                        self.cap.release()
+                        time.sleep(1)
+                        self.cap = cv2.VideoCapture(config["rtsp_url"], cv2.CAP_FFMPEG)
+                        if self.cap.isOpened():
+                            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+                            self.cap.set(cv2.CAP_PROP_FPS, config["fps"])
+                            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, config["frame_width"])
+                            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config["frame_height"])
+                            logger.info("✅ Camera reconnected")
                             reconnect_attempts = 0
-                            continue
                         else:
-                            logger.error("❌ Camera reconnection failed after multiple attempts")
-                            time.sleep(5)
-                            continue
+                            logger.error("❌ Failed to reconnect camera")
+                            time.sleep(2)
+                        continue
                     else:
-                        time.sleep(0.1)
+                        time.sleep(0.05)
                         continue
                 else:
                     reconnect_attempts = 0
@@ -495,127 +498,137 @@ class GestureProcessor:
                 
                 self.frame_count += 1
                 
-                # Auto reset MediaPipe every 300 frames to prevent degradation
-                if self.frame_count % 300 == 0:
-                    logger.info("♻️ Resetting MediaPipe")
+                # Process every other frame to reduce CPU load (NO CORRUPTION)
+                if self.frame_count % 2 != 0:
+                    continue
+                
+                # Auto reset MediaPipe if no detection for a while (WATCHDOG)
+                if self.detection_count == 0 and self.frame_count > 100 and frames_without_detection > 50:
+                    logger.warning("⚠️ No detection for extended period, resetting MediaPipe")
                     hands = None
                     init_mediapipe()
+                    frames_without_detection = 0
                 
                 # Debug every 100 frames
                 if self.frame_count % 100 == 0:
-                    elapsed = time.time() - self.last_debug_time
                     logger.info(f"📊 Stats: FPS: {self.current_fps}, Detections: {self.detection_count}, Hand: {self.hand_detected}, Gesture: {self.current_stable_gesture}, HA: {'✓' if self.ha_client.connected else '✗'}")
                     self.last_debug_time = time.time()
                     self.detection_count = 0
                 
-                # Process frame with skip for CPU efficiency
-                frame_skip_counter += 1
-                if frame_skip_counter >= process_every_n:
-                    frame_skip_counter = 0
+                try:
+                    # FLIP FIRST (mirror effect for natural interaction)
+                    frame = cv2.flip(frame, 1)
                     
-                    try:
-                        # Resize frame for faster processing
-                        frame_small = cv2.resize(frame, (config["frame_width"], config["frame_height"]))
+                    # Convert to RGB directly from original frame (NO RESIZE)
+                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    
+                    # Process with MediaPipe
+                    results = hands.process(rgb_frame)
+                    
+                    finger_count = -1
+                    self.hand_detected = False
+                    
+                    if results.multi_hand_landmarks:
+                        self.hand_detected = True
+                        self.detection_count += 1
+                        frames_without_detection = 0
                         
-                        # Convert to RGB and flip horizontally for mirror effect
-                        rgb_frame = cv2.cvtColor(frame_small, cv2.COLOR_BGR2RGB)
-                        rgb_frame = cv2.flip(rgb_frame, 1)
+                        # Get first hand
+                        landmarks = results.multi_hand_landmarks[0].landmark
+                        finger_count = count_extended_fingers(landmarks, 
+                                                            frame.shape[1], 
+                                                            frame.shape[0])
                         
-                        # Process with MediaPipe
-                        results = hands.process(rgb_frame)
+                        # Log detection occasionally
+                        if self.detection_count % 30 == 0:
+                            logger.info(f"✋ Hand detected - {finger_count} fingers")
+                    
+                    # CRITICAL FIX: Clear history when no hand detected
+                    if self.hand_detected:
+                        self.gesture_history.append(finger_count)
+                    else:
+                        self.gesture_history.clear()
+                        frames_without_detection += 1
+                        self.current_finger_count = 0
                         
-                        finger_count = -1  # -1 means no hand detected
-                        self.hand_detected = False
-                        
-                        if results.multi_hand_landmarks:
-                            self.hand_detected = True
-                            self.detection_count += 1
-                            
-                            # Get first hand
-                            landmarks = results.multi_hand_landmarks[0].landmark
-                            finger_count = count_extended_fingers(landmarks, 
-                                                                frame_small.shape[1], 
-                                                                frame_small.shape[0])
-                            
-                            # Log detection occasionally
-                            if self.detection_count % 30 == 0:
-                                logger.info(f"✋ Hand detected - {finger_count} fingers")
-                        
-                        # Update gesture history
-                        self.gesture_history.append(finger_count if self.hand_detected else -1)
-                        
-                        # Find stable gesture (with lower confidence threshold for faster response)
-                        if len(self.gesture_history) == self.gesture_history.maxlen:
-                            # Count valid gestures (ignore -1)
-                            valid_gestures = [g for g in self.gesture_history if g >= 0]
-                            if valid_gestures:
-                                # Get most common valid gesture
-                                gesture_counts = Counter(valid_gestures)
-                                most_common = gesture_counts.most_common(1)[0]
-                                stable = most_common[0]
-                                confidence = most_common[1] / len(self.gesture_history)
-                                
-                                # Only consider stable if confidence is high enough (LOWERED THRESHOLD)
-                                if confidence >= 0.5:  # CHANGED: 0.6 → 0.5
-                                    if stable != self.current_stable_gesture:
-                                        self.current_stable_gesture = stable
-                                        self.current_finger_count = stable
-                                        logger.info(f"🎭 Stable gesture detected: {stable} fingers (confidence: {confidence:.2f})")
-                                        
-                                        # Trigger HA action in main thread
-                                        asyncio.run_coroutine_threadsafe(
-                                            self.ha_client.handle_gesture(stable),
-                                            self.ha_client.loop
-                                        )
-                                        
-                                        # Emit gesture event with high confidence
-                                        gesture_info = get_gesture_info(stable)
-                                        self._emit_async("gesture", {
-                                            "fingerCount": stable,
-                                            "gestureName": gesture_info["name"],
-                                            "gestureIcon": gesture_info["icon"],
-                                            "handDetected": True,
-                                            "lastAction": self.ha_client.last_action,
-                                            "haConnected": self.ha_client.connected,
-                                            "confidence": confidence,
-                                            "timestamp": datetime.now().isoformat()
-                                        })
-                                    else:
-                                        self.current_finger_count = stable
-                                else:
-                                    self.current_finger_count = self.current_stable_gesture if self.current_stable_gesture is not None else 0
-                            else:
-                                # No hand detected
-                                if self.current_stable_gesture is not None:
-                                    logger.info("👋 Hand removed from frame")
-                                    self.current_stable_gesture = None
-                                self.current_finger_count = 0
-                                self.hand_detected = False
-                        else:
-                            self.current_finger_count = finger_count if self.hand_detected else 0
-                        
-                        # Broadcast current state for UI
-                        if self.hand_detected and self.current_finger_count >= 0:
-                            gesture_info = get_gesture_info(self.current_finger_count)
-                            gesture_name = gesture_info["name"]
-                            gesture_icon = gesture_info["icon"]
-                        else:
-                            gesture_name = "No Hand"
-                            gesture_icon = "🤚"
-                        
+                        # Emit no-hand state
                         self._emit_async("gesture_update", {
-                            "fingerCount": self.current_finger_count if self.hand_detected else 0,
-                            "gestureName": gesture_name,
-                            "gestureIcon": gesture_icon,
-                            "handDetected": self.hand_detected,
+                            "fingerCount": 0,
+                            "gestureName": "No Hand",
+                            "gestureIcon": "🤚",
+                            "handDetected": False,
                             "lastAction": self.ha_client.last_action,
                             "haConnected": self.ha_client.connected,
                             "timestamp": datetime.now().isoformat(),
                             "entityStates": self.ha_client.entity_states if self.ha_client else {}
                         })
+                        continue
+                    
+                    # Find stable gesture with reduced history size
+                    if len(self.gesture_history) >= config["stability_frames"]:
+                        # Get most recent frames (last N)
+                        recent_frames = list(self.gesture_history)[-config["stability_frames"]:]
+                        gesture_counts = Counter(recent_frames)
+                        most_common = gesture_counts.most_common(1)[0]
+                        stable = most_common[0]
+                        confidence = most_common[1] / len(recent_frames)
                         
-                    except Exception as e:
-                        logger.error(f"❌ Gesture detection error: {e}")
+                        # Only trigger on stable gesture
+                        if confidence >= 0.5:  # Lower threshold for better response
+                            if stable != self.current_stable_gesture:
+                                self.current_stable_gesture = stable
+                                self.current_finger_count = stable
+                                logger.info(f"🎭 Stable gesture detected: {stable} fingers (confidence: {confidence:.2f})")
+                                
+                                # Trigger HA action
+                                asyncio.run_coroutine_threadsafe(
+                                    self.ha_client.handle_gesture(stable),
+                                    self.ha_client.loop
+                                )
+                                
+                                # Emit gesture event
+                                gesture_info = get_gesture_info(stable)
+                                self._emit_async("gesture", {
+                                    "fingerCount": stable,
+                                    "gestureName": gesture_info["name"],
+                                    "gestureIcon": gesture_info["icon"],
+                                    "handDetected": True,
+                                    "lastAction": self.ha_client.last_action,
+                                    "haConnected": self.ha_client.connected,
+                                    "confidence": confidence,
+                                    "timestamp": datetime.now().isoformat()
+                                })
+                            else:
+                                self.current_finger_count = stable
+                        else:
+                            self.current_finger_count = self.current_stable_gesture if self.current_stable_gesture is not None else 0
+                    
+                    # Broadcast current state for UI
+                    if self.hand_detected and self.current_finger_count >= 0:
+                        gesture_info = get_gesture_info(self.current_finger_count)
+                        gesture_name = gesture_info["name"]
+                        gesture_icon = gesture_info["icon"]
+                    else:
+                        gesture_name = "No Hand"
+                        gesture_icon = "🤚"
+                    
+                    self._emit_async("gesture_update", {
+                        "fingerCount": self.current_finger_count if self.hand_detected else 0,
+                        "gestureName": gesture_name,
+                        "gestureIcon": gesture_icon,
+                        "handDetected": self.hand_detected,
+                        "lastAction": self.ha_client.last_action,
+                        "haConnected": self.ha_client.connected,
+                        "timestamp": datetime.now().isoformat(),
+                        "entityStates": self.ha_client.entity_states if self.ha_client else {}
+                    })
+                    
+                except Exception as e:
+                    logger.error(f"❌ Gesture detection error: {e}")
+                    # Reset on error to recover
+                    hands = None
+                    init_mediapipe()
+                    self.gesture_history.clear()
                 
             except Exception as e:
                 logger.error(f"❌ Frame processing error: {e}")
