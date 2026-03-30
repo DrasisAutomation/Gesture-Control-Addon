@@ -426,6 +426,7 @@ class GestureProcessor:
         """Main processing loop in separate thread"""
         # Initialize MediaPipe in this thread
         global hands
+        
         if hands is None:
             init_mediapipe()
         
@@ -497,7 +498,6 @@ class GestureProcessor:
                 # Auto reset MediaPipe every 300 frames to prevent degradation
                 if self.frame_count % 300 == 0:
                     logger.info("♻️ Resetting MediaPipe")
-                    global hands
                     hands = None
                     init_mediapipe()
                 
@@ -534,8 +534,8 @@ class GestureProcessor:
                             # Get first hand
                             landmarks = results.multi_hand_landmarks[0].landmark
                             finger_count = count_extended_fingers(landmarks, 
-                                                                  frame_small.shape[1], 
-                                                                  frame_small.shape[0])
+                                                                frame_small.shape[1], 
+                                                                frame_small.shape[0])
                             
                             # Log detection occasionally
                             if self.detection_count % 30 == 0:
