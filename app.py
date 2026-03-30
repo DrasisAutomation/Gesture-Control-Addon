@@ -2,6 +2,7 @@
 """
 Gesture Control Add-on for Home Assistant
 Enhanced with 5-entity support and improved gesture detection
+Fixed for stability, CPU efficiency, and auto-recovery
 """
 
 import asyncio
@@ -44,28 +45,28 @@ def load_config():
             "entity_3": "light.light_3",
             "entity_4": "light.light_4",
             "entity_5": "light.light_5",
-            "fps": 15,
-            "frame_width": 640,
-            "frame_height": 480,
+            "fps": 10,  # REDUCED: 15 → 10 for better stability
+            "frame_width": 480,  # REDUCED: 640 → 480
+            "frame_height": 360,  # REDUCED: 480 → 360
             "bitrate": "500k",
             "cooldown_seconds": 1,
             "detection_confidence": 0.5,
             "tracking_confidence": 0.5,
             "reset_gesture": 0,
-            "stability_frames": 5,
+            "stability_frames": 3,  # REDUCED: 5 → 3 for faster response
         }
     
     # Ensure all keys exist
     defaults = {
-        "fps": 15,
-        "frame_width": 640,
-        "frame_height": 480,
+        "fps": 10,
+        "frame_width": 480,
+        "frame_height": 360,
         "bitrate": "500k",
         "cooldown_seconds": 1,
         "detection_confidence": 0.5,
         "tracking_confidence": 0.5,
         "reset_gesture": 0,
-        "stability_frames": 5,
+        "stability_frames": 3,
     }
     for key, value in defaults.items():
         if key not in config:
@@ -105,7 +106,6 @@ def count_extended_fingers(landmarks, image_width, image_height):
 
     fingers = []
 
-    # Thumb (more tolerant)
     # Thumb (handle left & right hand properly)
     is_right_hand = landmarks[5].x < landmarks[17].x
 
@@ -314,7 +314,7 @@ class HAClient:
             logger.debug(f"⏱️ Cooldown active for gesture: {finger_count}")
             return False
         
-        # ❌ Disable reset gesture (fist does nothing)
+        # Disable reset gesture (fist does nothing)
         if finger_count == self.reset_gesture:
             return False
         
@@ -372,6 +372,7 @@ class GestureProcessor:
         
         # Async event loop reference
         self.loop = None
+        self.last_frame_time = time.time()
         
     def set_loop(self, loop):
         self.loop = loop
@@ -399,6 +400,27 @@ class GestureProcessor:
                 self.sio_server.emit(event, data),
                 self.loop
             )
+    
+    def _reconnect_camera(self):
+        """Reconnect camera if stream fails"""
+        logger.warning("⚠️ Reconnecting camera...")
+        if self.cap:
+            self.cap.release()
+        time.sleep(1)
+        self.cap = cv2.VideoCapture(config["rtsp_url"], cv2.CAP_FFMPEG)
+        
+        if not self.cap.isOpened():
+            logger.error("❌ Failed to reconnect camera")
+            return False
+        
+        # Set properties
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+        self.cap.set(cv2.CAP_PROP_FPS, config["fps"])
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, config["frame_width"])
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config["frame_height"])
+        
+        logger.info("✅ Camera reconnected")
+        return True
     
     def _process_loop(self):
         """Main processing loop in separate thread"""
@@ -432,18 +454,35 @@ class GestureProcessor:
             "message": "Camera connected"
         })
         
-        # Process every frame for better detection
-        process_every_n = max(1, 30 // config["fps"])
+        # Process every 2nd frame for stable CPU usage
+        process_every_n = 2  # FIXED: More stable than dynamic calculation
         frame_skip_counter = 0
+        reconnect_attempts = 0
         
         while self.running:
             try:
+                # Drop old frames to prevent lag (FRAME FRESHNESS FIX)
+                for _ in range(2):
+                    self.cap.grab()
+                
                 # Read frame
                 ret, frame = self.cap.read()
                 if not ret:
-                    logger.warning("⚠️ Failed to read frame")
-                    time.sleep(0.05)
-                    continue
+                    # AUTO-RECOVERY: Reconnect camera on failure
+                    reconnect_attempts += 1
+                    if reconnect_attempts >= 3:
+                        if self._reconnect_camera():
+                            reconnect_attempts = 0
+                            continue
+                        else:
+                            logger.error("❌ Camera reconnection failed after multiple attempts")
+                            time.sleep(5)
+                            continue
+                    else:
+                        time.sleep(0.1)
+                        continue
+                else:
+                    reconnect_attempts = 0
                 
                 # Calculate FPS
                 self.fps_counter += 1
@@ -455,6 +494,13 @@ class GestureProcessor:
                 
                 self.frame_count += 1
                 
+                # Auto reset MediaPipe every 300 frames to prevent degradation
+                if self.frame_count % 300 == 0:
+                    logger.info("♻️ Resetting MediaPipe")
+                    global hands
+                    hands = None
+                    init_mediapipe()
+                
                 # Debug every 100 frames
                 if self.frame_count % 100 == 0:
                     elapsed = time.time() - self.last_debug_time
@@ -462,14 +508,17 @@ class GestureProcessor:
                     self.last_debug_time = time.time()
                     self.detection_count = 0
                 
-                # Process frame
+                # Process frame with skip for CPU efficiency
                 frame_skip_counter += 1
                 if frame_skip_counter >= process_every_n:
                     frame_skip_counter = 0
                     
                     try:
+                        # Resize frame for faster processing
+                        frame_small = cv2.resize(frame, (config["frame_width"], config["frame_height"]))
+                        
                         # Convert to RGB and flip horizontally for mirror effect
-                        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        rgb_frame = cv2.cvtColor(frame_small, cv2.COLOR_BGR2RGB)
                         rgb_frame = cv2.flip(rgb_frame, 1)
                         
                         # Process with MediaPipe
@@ -485,8 +534,8 @@ class GestureProcessor:
                             # Get first hand
                             landmarks = results.multi_hand_landmarks[0].landmark
                             finger_count = count_extended_fingers(landmarks, 
-                                                                  frame.shape[1], 
-                                                                  frame.shape[0])
+                                                                  frame_small.shape[1], 
+                                                                  frame_small.shape[0])
                             
                             # Log detection occasionally
                             if self.detection_count % 30 == 0:
@@ -495,7 +544,7 @@ class GestureProcessor:
                         # Update gesture history
                         self.gesture_history.append(finger_count if self.hand_detected else -1)
                         
-                        # Find stable gesture
+                        # Find stable gesture (with lower confidence threshold for faster response)
                         if len(self.gesture_history) == self.gesture_history.maxlen:
                             # Count valid gestures (ignore -1)
                             valid_gestures = [g for g in self.gesture_history if g >= 0]
@@ -506,8 +555,8 @@ class GestureProcessor:
                                 stable = most_common[0]
                                 confidence = most_common[1] / len(self.gesture_history)
                                 
-                                # Only consider stable if confidence is high enough
-                                if confidence >= 0.6:
+                                # Only consider stable if confidence is high enough (LOWERED THRESHOLD)
+                                if confidence >= 0.5:  # CHANGED: 0.6 → 0.5
                                     if stable != self.current_stable_gesture:
                                         self.current_stable_gesture = stable
                                         self.current_finger_count = stable
