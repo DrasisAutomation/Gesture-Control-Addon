@@ -498,16 +498,9 @@ class GestureProcessor:
                 
                 self.frame_count += 1
                 
-                # Process every other frame to reduce CPU load (NO CORRUPTION)
+                # Process every other frame to reduce CPU load
                 if self.frame_count % 2 != 0:
                     continue
-                
-                # Auto reset MediaPipe if no detection for a while (WATCHDOG)
-                if self.detection_count == 0 and self.frame_count > 100 and frames_without_detection > 50:
-                    logger.warning("⚠️ No detection for extended period, resetting MediaPipe")
-                    hands = None
-                    init_mediapipe()
-                    frames_without_detection = 0
                 
                 # Debug every 100 frames
                 if self.frame_count % 100 == 0:
@@ -519,7 +512,7 @@ class GestureProcessor:
                     # FLIP FIRST (mirror effect for natural interaction)
                     frame = cv2.flip(frame, 1)
                     
-                    # Convert to RGB directly from original frame (NO RESIZE)
+                    # Convert to RGB directly from original frame
                     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     
                     # Process with MediaPipe
@@ -543,13 +536,20 @@ class GestureProcessor:
                         if self.detection_count % 30 == 0:
                             logger.info(f"✋ Hand detected - {finger_count} fingers")
                     
-                    # CRITICAL FIX: Clear history when no hand detected
+                    # FIX 2: Update gesture history without -1 values
                     if self.hand_detected:
                         self.gesture_history.append(finger_count)
                     else:
-                        self.gesture_history.clear()
+                        # DON'T push -1 (this causes freeze)
+                        if len(self.gesture_history) > 0:
+                            self.gesture_history.pop()
                         frames_without_detection += 1
                         self.current_finger_count = 0
+                        
+                        # FIX 3: Reset if hand lost
+                        if self.current_stable_gesture is not None:
+                            self.current_stable_gesture = None
+                            logger.debug("🔄 Reset stable gesture - ready for new detection")
                         
                         # Emit no-hand state
                         self._emit_async("gesture_update", {
@@ -564,17 +564,17 @@ class GestureProcessor:
                         })
                         continue
                     
-                    # Find stable gesture with reduced history size
+                    # Find stable gesture
                     if len(self.gesture_history) >= config["stability_frames"]:
-                        # Get most recent frames (last N)
+                        # Get most recent frames
                         recent_frames = list(self.gesture_history)[-config["stability_frames"]:]
                         gesture_counts = Counter(recent_frames)
                         most_common = gesture_counts.most_common(1)[0]
                         stable = most_common[0]
                         confidence = most_common[1] / len(recent_frames)
                         
-                        # Only trigger on stable gesture
-                        if confidence >= 0.5:  # Lower threshold for better response
+                        # FIX 1: Lower threshold for easier detection
+                        if confidence >= 0.4:  # Changed from 0.5 to 0.4
                             if stable != self.current_stable_gesture:
                                 self.current_stable_gesture = stable
                                 self.current_finger_count = stable
@@ -602,6 +602,8 @@ class GestureProcessor:
                                 self.current_finger_count = stable
                         else:
                             self.current_finger_count = self.current_stable_gesture if self.current_stable_gesture is not None else 0
+                    else:
+                        self.current_finger_count = finger_count if self.hand_detected else 0
                     
                     # Broadcast current state for UI
                     if self.hand_detected and self.current_finger_count >= 0:
