@@ -98,10 +98,12 @@ def init_mediapipe():
         model_complexity=0
     )
     logger.info("✅ MediaPipe initialized")
+
 def calculate_hand_size(landmarks):
     x = [lm.x for lm in landmarks]
     y = [lm.y for lm in landmarks]
     return (max(x) - min(x)) * (max(y) - min(y))
+
 def count_extended_fingers(landmarks, image_width, image_height):
     """Count number of extended fingers from hand landmarks"""
     if not landmarks:
@@ -119,10 +121,11 @@ def count_extended_fingers(landmarks, image_width, image_height):
 
     fingers.append(1 if thumb_open else 0)
 
-    fingers.append(1 if landmarks[8].y < landmarks[6].y - 0.03 else 0)
-    fingers.append(1 if landmarks[12].y < landmarks[10].y - 0.03 else 0)
-    fingers.append(1 if landmarks[16].y < landmarks[14].y - 0.02 else 0)
-    fingers.append(1 if landmarks[20].y < landmarks[18].y - 0.02 else 0)
+    # REMOVED STRICTNESS - no offsets for far detection
+    fingers.append(1 if landmarks[8].y < landmarks[6].y else 0)
+    fingers.append(1 if landmarks[12].y < landmarks[10].y else 0)
+    fingers.append(1 if landmarks[16].y < landmarks[14].y else 0)
+    fingers.append(1 if landmarks[20].y < landmarks[18].y else 0)
 
     return sum(fingers)
 
@@ -555,11 +558,16 @@ class GestureProcessor:
                         # Get first hand
                         landmarks = results.multi_hand_landmarks[0].landmark
 
-                        # 🔥 Hand size filter (reject small/far gestures)
+                        # 🔥 Hand size filter (allow far gestures)
                         hand_size = calculate_hand_size(landmarks)
+                        
+                        # DEBUG: print hand size and spread
+                        spread = abs(landmarks[8].x - landmarks[20].x)
+                        print("size:", round(hand_size,4), "spread:", round(spread,4))
 
-                        if hand_size < 0.007:   # 👈 tune this if needed
-                            continue  # skip this frame
+                        # ALLOW FAR GESTURES - very relaxed threshold
+                        if hand_size < 0.002:
+                            continue
 
                         finger_count = count_extended_fingers(
                             landmarks,
@@ -577,9 +585,8 @@ class GestureProcessor:
                         else:
                             continue
 
-                        # 🔥 Reject phone/closed-hand shapes
-                        spread = abs(landmarks[8].x - landmarks[20].x)
-                        if spread < 0.08:
+                        # 🔥 SPREAD FILTER - VERY RELAXED (blocks only phone shapes)
+                        if spread < 0.015:
                             continue
                         
                         # Log detection occasionally
