@@ -558,15 +558,29 @@ class GestureProcessor:
                         # 🔥 Hand size filter (reject small/far gestures)
                         hand_size = calculate_hand_size(landmarks)
 
-                        if hand_size < 0.012:   # 👈 tune this if needed
+                        if hand_size < 0.007:   # 👈 tune this if needed
                             continue  # skip this frame
 
-                        # Now detect fingers only if hand is big enough
                         finger_count = count_extended_fingers(
                             landmarks,
                             frame.shape[1],
                             frame.shape[0]
                         )
+
+                        # ❌ Reject weird partial gestures
+                        if finger_count == 0:
+                            pass
+                        elif finger_count == 5:
+                            pass
+                        elif finger_count in [1, 2, 3]:
+                            pass
+                        else:
+                            continue
+
+                        # 🔥 Reject phone/closed-hand shapes
+                        spread = abs(landmarks[8].x - landmarks[20].x)
+                        if spread < 0.08:
+                            continue
                         
                         # Log detection occasionally
                         if self.detection_count % 30 == 0:
@@ -603,7 +617,7 @@ class GestureProcessor:
                         confidence = most_common[1] / len(recent_frames)
                         
                         # Only trigger on stable gesture
-                        if confidence >= 0.5:  # Lower threshold for better response
+                        if most_common[1] == config["stability_frames"]: # Lower threshold for better response
                             if stable != self.current_stable_gesture:
                                 self.current_stable_gesture = stable
                                 self.current_finger_count = stable
