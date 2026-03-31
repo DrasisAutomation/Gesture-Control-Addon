@@ -3,6 +3,7 @@
 Gesture Control Add-on for Home Assistant
 Enhanced with 5-entity support and improved gesture detection
 Fixed for stability, CPU efficiency, and auto-recovery
+Added MQTT support for gesture publishing
 """
 
 import asyncio
@@ -23,6 +24,7 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import socketio
+import paho.mqtt.publish as mqtt_publish
 
 # ========== CONFIGURATION ==========
 CONFIG_PATH = "/data/options.json"
@@ -54,6 +56,9 @@ def load_config():
             "tracking_confidence": 0.5,
             "reset_gesture": 0,
             "stability_frames": 3,  # REDUCED: 5 → 3 for faster response
+            "mqtt_broker": "homeassistant.local",  # NEW: MQTT broker hostname
+            "mqtt_port": 1883,  # NEW: MQTT broker port
+            "mqtt_topic": "home/gesture",  # NEW: MQTT topic for gestures
         }
     
     # Ensure all keys exist
@@ -67,6 +72,9 @@ def load_config():
         "tracking_confidence": 0.5,
         "reset_gesture": 0,
         "stability_frames": 3,
+        "mqtt_broker": "homeassistant.local",
+        "mqtt_port": 1883,
+        "mqtt_topic": "home/gesture",
     }
     for key, value in defaults.items():
         if key not in config:
@@ -82,6 +90,44 @@ logging.basicConfig(
 logger = logging.getLogger("gesture-control")
 
 config = load_config()
+
+# ========== MQTT ==========
+LAST_MQTT_PAYLOAD = None
+LAST_MQTT_TIME = 0
+
+def send_mqtt_gesture(finger_count, gesture_name, hand_detected):
+    """Send gesture data via MQTT"""
+    global LAST_MQTT_PAYLOAD, LAST_MQTT_TIME
+    
+    try:
+        payload = {
+            "finger": int(finger_count),
+            "name": str(gesture_name),
+            "hand": bool(hand_detected),
+            "timestamp": datetime.now().isoformat()
+        }
+
+        payload_str = json.dumps(payload)
+
+        # Prevent spam (only send if changed or after cooldown)
+        now = time.time()
+        if payload_str == LAST_MQTT_PAYLOAD and (now - LAST_MQTT_TIME) < 1:
+            return
+
+        mqtt_publish.single(
+            topic=config["mqtt_topic"],
+            payload=payload_str,
+            hostname=config["mqtt_broker"],
+            port=config["mqtt_port"]
+        )
+
+        LAST_MQTT_PAYLOAD = payload_str
+        LAST_MQTT_TIME = now
+
+        logger.debug(f"📡 MQTT Sent: {payload_str}")
+
+    except Exception as e:
+        logger.warning(f"⚠️ MQTT Error: {e}")
 
 # ========== GESTURE DETECTION ==========
 mp_hands = mp.solutions.hands
@@ -584,6 +630,9 @@ class GestureProcessor:
                         frames_without_detection += 1
                         self.current_finger_count = 0
                         
+                        # Send MQTT for no hand state
+                        send_mqtt_gesture(0, "No Hand", False)
+                        
                         # Emit no-hand state
                         self._emit_async("gesture_update", {
                             "fingerCount": 0,
@@ -620,6 +669,10 @@ class GestureProcessor:
                                 
                                 # Emit gesture event
                                 gesture_info = get_gesture_info(stable)
+                                
+                                # Send MQTT for stable gesture
+                                send_mqtt_gesture(stable, gesture_info["name"], True)
+                                
                                 self._emit_async("gesture", {
                                     "fingerCount": stable,
                                     "gestureName": gesture_info["name"],
@@ -640,6 +693,9 @@ class GestureProcessor:
                         gesture_info = get_gesture_info(self.current_finger_count)
                         gesture_name = gesture_info["name"]
                         gesture_icon = gesture_info["icon"]
+                        
+                        # Send MQTT for current gesture state
+                        send_mqtt_gesture(self.current_finger_count, gesture_name, True)
                     else:
                         gesture_name = "No Hand"
                         gesture_icon = "🤚"
@@ -799,6 +855,9 @@ class GestureServer:
             "hand_detected": self.gesture_processor.hand_detected if self.gesture_processor else False,
             "fps": config["fps"],
             "current_fps": self.gesture_processor.current_fps if self.gesture_processor else 0,
+            "mqtt_enabled": True,
+            "mqtt_broker": config["mqtt_broker"],
+            "mqtt_topic": config["mqtt_topic"],
             "uptime": datetime.now().isoformat()
         })
     
@@ -813,6 +872,9 @@ class GestureServer:
             "tracking_confidence": config["tracking_confidence"],
             "reset_gesture": config["reset_gesture"],
             "stability_frames": config["stability_frames"],
+            "mqtt_broker": config["mqtt_broker"],
+            "mqtt_port": config["mqtt_port"],
+            "mqtt_topic": config["mqtt_topic"],
             "entities": {
                 "entity_1": config.get("entity_1", ""),
                 "entity_2": config.get("entity_2", ""),
@@ -826,7 +888,7 @@ class GestureServer:
         """Start the server and initialize components"""
         # Print startup banner
         logger.info("=" * 60)
-        logger.info("🎮 Starting Gesture Control Add-on v2.0")
+        logger.info("🎮 Starting Gesture Control Add-on v2.0 (with MQTT)")
         logger.info("=" * 60)
         logger.info(f"📹 RTSP URL: {'✅ Configured' if config['rtsp_url'] != 'rtsp://your-camera-ip:554/stream' else '⚠️ Using default'}")
         logger.info(f"💡 Entity 1: {config.get('entity_1', 'Not configured')}")
@@ -842,6 +904,8 @@ class GestureServer:
         logger.info(f"⚡ Target FPS: {config['fps']}")
         logger.info(f"🔌 HA URL: {config['ha_url']}")
         logger.info(f"🔑 HA Token: {config['ha_token'][:20]}..." if config['ha_token'] else "⚠️ No token set")
+        logger.info(f"📡 MQTT Broker: {config['mqtt_broker']}:{config['mqtt_port']}")
+        logger.info(f"📡 MQTT Topic: {config['mqtt_topic']}")
         logger.info("=" * 60)
         
         # Initialize HA client with entities dictionary
