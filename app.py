@@ -165,28 +165,23 @@ def is_in_center_zone(center, frame_width, frame_height, zone_size):
         return False
     
     return True
-
+def is_finger_open(tip, pip):
+    return tip.y < pip.y - 0.005
 def count_extended_fingers(landmarks, image_width, image_height):
-    """Count number of extended fingers from hand landmarks"""
     if not landmarks:
         return 0
 
     fingers = []
 
-    # Thumb (handle left & right hand properly)
-    is_right_hand = landmarks[5].x < landmarks[17].x
-
-    if is_right_hand:
-        thumb_open = landmarks[4].x < landmarks[3].x - 0.02
-    else:
-        thumb_open = landmarks[4].x > landmarks[3].x + 0.02
-
+    # Thumb (simplified and stable)
+    thumb_open = landmarks[4].x < landmarks[3].x if landmarks[5].x < landmarks[17].x else landmarks[4].x > landmarks[3].x
     fingers.append(1 if thumb_open else 0)
 
-    fingers.append(1 if landmarks[8].y < landmarks[6].y - 0.03 else 0)
-    fingers.append(1 if landmarks[12].y < landmarks[10].y - 0.03 else 0)
-    fingers.append(1 if landmarks[16].y < landmarks[14].y - 0.02 else 0)
-    fingers.append(1 if landmarks[20].y < landmarks[18].y - 0.02 else 0)
+    # Other fingers using simple comparison (NO threshold)
+    fingers.append(1 if is_finger_open(landmarks[8], landmarks[6]) else 0)
+    fingers.append(1 if is_finger_open(landmarks[12], landmarks[10]) else 0)
+    fingers.append(1 if is_finger_open(landmarks[16], landmarks[14]) else 0)
+    fingers.append(1 if is_finger_open(landmarks[20], landmarks[18]) else 0)
 
     return sum(fingers)
 
