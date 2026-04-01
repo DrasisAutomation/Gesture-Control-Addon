@@ -4,6 +4,7 @@ Gesture Control Add-on for Home Assistant
 Enhanced with 5-entity support and improved gesture detection
 Fixed for stability, CPU efficiency, and auto-recovery
 Added gesture control toggle via input_boolean
+FIXED: Event listener auto-restart and connection stability
 """
 
 import asyncio
@@ -224,14 +225,15 @@ class HAClient:
 
         return None
     
-    # NEW: Listen for state changes
+    # FIXED: Listen for state changes with timeout protection
     async def listen_events(self):
         """Listen to HA events continuously for gesture control toggle"""
         logger.info("🎧 Starting event listener for gesture control")
         
         while self.connected:
             try:
-                msg = await self.ws.receive_json()
+                # 🔥 FIX 2: Add timeout protection
+                msg = await asyncio.wait_for(self.ws.receive_json(), timeout=30)
                 
                 if msg.get("type") == "event":
                     event_data = msg.get("event", {})
@@ -253,6 +255,9 @@ class HAClient:
                             if old_state != self.gesture_enabled:
                                 logger.info(f"🎛 Gesture Control toggled: {'ON ✅' if self.gesture_enabled else 'OFF ❌'} (entity: {entity_id})")
                                 
+                                # Log current state for debugging
+                                logger.info(f"🎛 Gesture Enabled: {self.gesture_enabled}")
+                                
                                 # Emit status update via Socket.IO if available
                                 if hasattr(self, 'sio_server') and self.sio_server:
                                     await self.sio_server.emit("gesture_toggle", {
@@ -270,6 +275,10 @@ class HAClient:
                     self.connected = False
                     break
                     
+            except asyncio.TimeoutError:
+                logger.warning("⚠️ No events received (timeout 30s) → reconnecting")
+                self.connected = False
+                break
             except asyncio.CancelledError:
                 logger.info("Event listener cancelled")
                 break
@@ -279,7 +288,20 @@ class HAClient:
                 break
         
         logger.info("🎧 Event listener stopped")
-        
+    
+    # 🔥 FIX 1: Auto-restart event listener
+    async def start_event_listener_with_restart(self):
+        """Start event listener with automatic restart on failure"""
+        while True:
+            try:
+                await self.listen_events()
+            except Exception as e:
+                logger.error(f"🔁 Event listener crashed, restarting... {e}")
+            
+            # Small delay before restart to avoid tight loop
+            await asyncio.sleep(1)
+            logger.info("🔄 Restarting event listener...")
+    
     async def connect(self):
         """Connect to Home Assistant WebSocket"""
         try:
@@ -317,11 +339,8 @@ class HAClient:
                 self.connected = True
                 logger.info("✅ HA WebSocket connected and authenticated")
                 
-                # Subscribe to state changes for entities
-                for i in range(1, 6):
-                    entity_id = self.entities.get(f"entity_{i}", "")
-                    if entity_id:
-                        await self.subscribe_to_entity(entity_id)
+                # 🔥 FIX 4: Subscribe once for state changes
+                await self.subscribe_to_state_changes()
                 
                 # NEW: Get initial state of gesture control entity
                 if self.gesture_control_entity:
@@ -335,10 +354,10 @@ class HAClient:
                         logger.warning(f"⚠️ Could not fetch gesture control state, using default: ENABLED")
                         self.gesture_enabled = True
                 
-                # NEW: Start event listener task
+                # 🔥 FIX 1: Start auto-restart event listener
                 if self.event_listener_task is None or self.event_listener_task.done():
-                    self.event_listener_task = asyncio.create_task(self.listen_events())
-                    logger.info("📡 Started event listener for gesture control")
+                    self.event_listener_task = asyncio.create_task(self.start_event_listener_with_restart())
+                    logger.info("📡 Started event listener with auto-restart")
                 
                 return True
             elif msg.get("type") == "auth_invalid":
@@ -356,8 +375,9 @@ class HAClient:
             self.connected = False
             return False
     
-    async def subscribe_to_entity(self, entity_id):
-        """Subscribe to entity state changes"""
+    # 🔥 FIX 4: Subscribe to state changes once
+    async def subscribe_to_state_changes(self):
+        """Subscribe to state changes"""
         if not self.connected or not self.ws:
             return
         
@@ -369,7 +389,7 @@ class HAClient:
                 "event_type": "state_changed"
             }
             await self.ws.send_json(subscribe_msg)
-            logger.info(f"📡 Subscribed to state changes")
+            logger.info(f"📡 Subscribed to state_changed events")
         except Exception as e:
             logger.error(f"❌ Failed to subscribe: {e}")
     
@@ -461,7 +481,7 @@ class HAClient:
         if finger_count in gesture_map:
             await self.send_gesture_display(gesture_map[finger_count])
         
-        # 🚫 NEW: Block gestures if control entity is OFF
+        # 🔥 FIX 3: FINAL SAFETY CHECK - Block gestures if control entity is OFF
         if not self.gesture_enabled:
             logger.debug(f"⛔ Gesture blocked (control OFF) - {finger_count} fingers")
             return False
@@ -986,7 +1006,7 @@ class GestureServer:
         """Start the server and initialize components"""
         # Print startup banner
         logger.info("=" * 60)
-        logger.info("🎮 Starting Gesture Control Add-on v2.1")
+        logger.info("🎮 Starting Gesture Control Add-on v2.1 (STABLE FIXED)")
         logger.info("=" * 60)
         logger.info(f"📹 RTSP URL: {'✅ Configured' if config['rtsp_url'] != 'rtsp://your-camera-ip:554/stream' else '⚠️ Using default'}")
         logger.info(f"💡 Entity 1: {config.get('entity_1', 'Not configured')}")
