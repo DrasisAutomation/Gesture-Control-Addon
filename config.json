@@ -1,6 +1,6 @@
 {
   "name": "Gesture Control for Smart Home",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "slug": "gesture_control",
   "description": "Control up to 5 smart devices using hand gestures via RTSP camera",
   "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],

@@ -171,6 +171,29 @@ class HAClient:
     def set_loop(self, loop):
         self.loop = loop
     
+    # NEW: Send gesture display to HA input_text
+    async def send_gesture_display(self, emoji):
+        """Send gesture emoji to HA input_text (UI only)"""
+        try:
+            url = self.url.replace("ws://", "http://").replace("/api/websocket", "")
+            api_url = f"{url}/api/services/input_text/set_value"
+
+            headers = {
+                "Authorization": f"Bearer {self.token}",
+                "Content-Type": "application/json"
+            }
+
+            data = {
+                "entity_id": "input_text.gesture_display",
+                "value": emoji
+            }
+
+            async with aiohttp.ClientSession() as session:
+                await session.post(api_url, headers=headers, json=data)
+
+        except Exception as e:
+            logger.error(f"Gesture display error: {e}")
+    
     # NEW: Fetch entity state from HA
     async def get_entity_state(self, entity_id):
         """Fetch current state of entity from HA"""
@@ -425,6 +448,19 @@ class HAClient:
     
     async def handle_gesture(self, finger_count):
         """Handle gesture and trigger HA actions with cooldown"""
+        # 🔥 SEND TO UI (NO LOGIC CHANGE)
+        gesture_map = {
+            0: "✊",
+            1: "☝️",
+            2: "✌️",
+            3: "👌",
+            4: "🖖",
+            5: "✋"
+        }
+        
+        if finger_count in gesture_map:
+            await self.send_gesture_display(gesture_map[finger_count])
+        
         # 🚫 NEW: Block gestures if control entity is OFF
         if not self.gesture_enabled:
             logger.debug(f"⛔ Gesture blocked (control OFF) - {finger_count} fingers")
