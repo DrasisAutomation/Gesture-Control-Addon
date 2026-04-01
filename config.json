@@ -1,6 +1,6 @@
 {
   "name": "Gesture Control for Smart Home",
-  "version": "2.2.9",
+  "version": "2.3.0",
   "slug": "gesture_control",
   "description": "Control up to 5 smart devices using hand gestures via RTSP camera",
   "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
@@ -16,6 +16,7 @@
     "entity_3": "light.light_3",
     "entity_4": "light.light_4",
     "entity_5": "light.light_5",
+    "gesture_control_entity": "input_boolean.gesture_control",
     "fps": 15,
     "frame_width": 640,
     "frame_height": 480,
@@ -35,6 +36,7 @@
     "entity_3": "str",
     "entity_4": "str",
     "entity_5": "str",
+    "gesture_control_entity": "str",
     "fps": "int(5,30)",
     "frame_width": "int(320,1920)",
     "frame_height": "int(240,1080)",

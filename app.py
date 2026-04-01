@@ -3,7 +3,7 @@
 Gesture Control Add-on for Home Assistant
 Enhanced with 5-entity support and improved gesture detection
 Fixed for stability, CPU efficiency, and auto-recovery
-Added MQTT support for gesture publishing
+Added gesture control toggle via input_boolean
 """
 
 import asyncio
@@ -24,7 +24,6 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import socketio
-import paho.mqtt.publish as mqtt_publish
 
 # ========== CONFIGURATION ==========
 CONFIG_PATH = "/data/options.json"
@@ -56,9 +55,7 @@ def load_config():
             "tracking_confidence": 0.5,
             "reset_gesture": 0,
             "stability_frames": 3,  # REDUCED: 5 → 3 for faster response
-            "mqtt_broker": "homeassistant.local",  # NEW: MQTT broker hostname
-            "mqtt_port": 1883,  # NEW: MQTT broker port
-            "mqtt_topic": "home/gesture",  # NEW: MQTT topic for gestures
+            "gesture_control_entity": "input_boolean.gesture_control",  # NEW
         }
     
     # Ensure all keys exist
@@ -72,9 +69,7 @@ def load_config():
         "tracking_confidence": 0.5,
         "reset_gesture": 0,
         "stability_frames": 3,
-        "mqtt_broker": "homeassistant.local",
-        "mqtt_port": 1883,
-        "mqtt_topic": "home/gesture",
+        "gesture_control_entity": "input_boolean.gesture_control",  # NEW
     }
     for key, value in defaults.items():
         if key not in config:
@@ -90,44 +85,6 @@ logging.basicConfig(
 logger = logging.getLogger("gesture-control")
 
 config = load_config()
-
-# ========== MQTT ==========
-LAST_MQTT_PAYLOAD = None
-LAST_MQTT_TIME = 0
-
-def send_mqtt_gesture(finger_count, gesture_name, hand_detected):
-    """Send gesture data via MQTT"""
-    global LAST_MQTT_PAYLOAD, LAST_MQTT_TIME
-    
-    try:
-        payload = {
-            "finger": int(finger_count),
-            "name": str(gesture_name),
-            "hand": bool(hand_detected),
-            "timestamp": datetime.now().isoformat()
-        }
-
-        payload_str = json.dumps(payload)
-
-        # Prevent spam (only send if changed or after cooldown)
-        now = time.time()
-        if payload_str == LAST_MQTT_PAYLOAD and (now - LAST_MQTT_TIME) < 1:
-            return
-
-        mqtt_publish.single(
-            topic=config["mqtt_topic"],
-            payload=payload_str,
-            hostname=config["mqtt_broker"],
-            port=config["mqtt_port"]
-        )
-
-        LAST_MQTT_PAYLOAD = payload_str
-        LAST_MQTT_TIME = now
-
-        logger.debug(f"📡 MQTT Sent: {payload_str}")
-
-    except Exception as e:
-        logger.warning(f"⚠️ MQTT Error: {e}")
 
 # ========== GESTURE DETECTION ==========
 mp_hands = mp.solutions.hands
@@ -162,11 +119,10 @@ def count_extended_fingers(landmarks, image_width, image_height):
 
     fingers.append(1 if thumb_open else 0)
 
-    # MODIFIED: Less strict thresholds for better mid-distance detection
-    fingers.append(1 if landmarks[8].y < landmarks[6].y - 0.01 else 0)
-    fingers.append(1 if landmarks[12].y < landmarks[10].y - 0.01 else 0)
-    fingers.append(1 if landmarks[16].y < landmarks[14].y - 0.005 else 0)
-    fingers.append(1 if landmarks[20].y < landmarks[18].y - 0.005 else 0)
+    fingers.append(1 if landmarks[8].y < landmarks[6].y - 0.03 else 0)
+    fingers.append(1 if landmarks[12].y < landmarks[10].y - 0.03 else 0)
+    fingers.append(1 if landmarks[16].y < landmarks[14].y - 0.02 else 0)
+    fingers.append(1 if landmarks[20].y < landmarks[18].y - 0.02 else 0)
 
     return sum(fingers)
 
@@ -203,6 +159,11 @@ class HAClient:
         self.last_action = ""
         self.loop = None
         self.reconnect_task = None
+        self.event_listener_task = None  # NEW: track event listener task
+        
+        # NEW: Gesture control toggle
+        self.gesture_control_entity = ""
+        self.gesture_enabled = True
         
         # Track toggled state for each entity
         self.entity_states = {i: False for i in range(1, 6)}
@@ -253,6 +214,11 @@ class HAClient:
                     if entity_id:
                         await self.subscribe_to_entity(entity_id)
                 
+                # NEW: Start event listener task
+                if self.event_listener_task is None or self.event_listener_task.done():
+                    self.event_listener_task = asyncio.create_task(self.listen_events())
+                    logger.info("📡 Started event listener")
+                
                 return True
             elif msg.get("type") == "auth_invalid":
                 logger.error(f"❌ HA auth invalid: {msg.get('message', 'Invalid token')}")
@@ -282,9 +248,65 @@ class HAClient:
                 "event_type": "state_changed"
             }
             await self.ws.send_json(subscribe_msg)
-            logger.info(f"📡 Subscribed to state changes for {entity_id}")
+            logger.info(f"📡 Subscribed to state changes")
         except Exception as e:
             logger.error(f"❌ Failed to subscribe: {e}")
+    
+    # NEW: Listen to events from Home Assistant
+    async def listen_events(self):
+        """Listen to HA events continuously"""
+        logger.info("🎧 Starting event listener for gesture control toggle")
+        
+        while self.connected:
+            try:
+                msg = await self.ws.receive_json()
+                
+                if msg.get("type") == "event":
+                    event_data = msg.get("event", {})
+                    event_type = event_data.get("event_type")
+                    
+                    # Handle state_changed events
+                    if event_type == "state_changed":
+                        data = event_data.get("data", {})
+                        entity_id = data.get("entity_id")
+                        
+                        # Check if this is our gesture control entity
+                        if entity_id == self.gesture_control_entity:
+                            new_state = data.get("new_state", {})
+                            state_value = new_state.get("state")
+                            
+                            # Update gesture enabled status
+                            self.gesture_enabled = (state_value == "on")
+                            
+                            logger.info(f"🎛 Gesture Control toggled: {'ON ✅' if self.gesture_enabled else 'OFF ❌'} (entity: {entity_id})")
+                            
+                            # Emit status update via Socket.IO if available
+                            if hasattr(self, 'sio_server') and self.sio_server:
+                                await self.sio_server.emit("gesture_toggle", {
+                                    "enabled": self.gesture_enabled,
+                                    "timestamp": datetime.now().isoformat()
+                                })
+                
+                elif msg.get("type") == "auth_required":
+                    # Re-authentication might be needed
+                    logger.warning("⚠️ Auth required again during event listening")
+                    self.connected = False
+                    break
+                    
+                elif msg.get("type") == "auth_invalid":
+                    logger.error("❌ Auth invalid during event listening")
+                    self.connected = False
+                    break
+                    
+            except asyncio.CancelledError:
+                logger.info("Event listener cancelled")
+                break
+            except Exception as e:
+                logger.error(f"❌ Event listener error: {e}")
+                self.connected = False
+                break
+        
+        logger.info("🎧 Event listener stopped")
     
     async def toggle_entity(self, entity_num, entity_id):
         """Toggle an entity (on/off)"""
@@ -361,6 +383,11 @@ class HAClient:
     
     async def handle_gesture(self, finger_count):
         """Handle gesture and trigger HA actions with cooldown"""
+        # 🚫 NEW: Block gestures if control entity is OFF
+        if not self.gesture_enabled:
+            logger.debug(f"⛔ Gesture blocked (control OFF) - {finger_count} fingers")
+            return False
+        
         if not self.connected:
             logger.warning(f"⚠️ HA disconnected → trying reconnect before gesture: {finger_count} fingers")
             await self.connect()
@@ -400,6 +427,14 @@ class HAClient:
     
     async def disconnect(self):
         """Disconnect from Home Assistant"""
+        # Cancel event listener task
+        if self.event_listener_task and not self.event_listener_task.done():
+            self.event_listener_task.cancel()
+            try:
+                await self.event_listener_task
+            except asyncio.CancelledError:
+                pass
+        
         if self.ws:
             await self.ws.close()
         if self.session and not self.session.closed:
@@ -574,7 +609,8 @@ class GestureProcessor:
                 
                 # Debug every 100 frames
                 if self.frame_count % 100 == 0:
-                    logger.info(f"📊 Stats: FPS: {self.current_fps}, Detections: {self.detection_count}, Hand: {self.hand_detected}, Gesture: {self.current_stable_gesture}, HA: {'✓' if self.ha_client.connected else '✗'}")
+                    gesture_status = "ON ✅" if self.ha_client.gesture_enabled else "OFF ❌"
+                    logger.info(f"📊 Stats: FPS: {self.current_fps}, Detections: {self.detection_count}, Hand: {self.hand_detected}, Gesture: {self.current_stable_gesture}, HA: {'✓' if self.ha_client.connected else '✗'}, Control: {gesture_status}")
                     self.last_debug_time = time.time()
                     self.detection_count = 0
                 
@@ -598,25 +634,9 @@ class GestureProcessor:
                         
                         # Get first hand
                         landmarks = results.multi_hand_landmarks[0].landmark
-                        
-                        # 🔥 STEP 1: Light distance filter (allow slight far)
-                        x = [lm.x for lm in landmarks]
-                        y = [lm.y for lm in landmarks]
-                        hand_size = (max(x) - min(x)) * (max(y) - min(y))
-                        
-                        if hand_size < 0.002:   # very low threshold
-                            continue
-                        
                         finger_count = count_extended_fingers(landmarks, 
                                                             frame.shape[1], 
                                                             frame.shape[0])
-                        
-                        # 🔥 STEP 2: Smart phone filter (soft)
-                        spread = abs(landmarks[8].x - landmarks[20].x)
-                        
-                        # Only reject when clearly closed hand shape
-                        if spread < 0.02 and finger_count <= 2:
-                            continue
                         
                         # Log detection occasionally
                         if self.detection_count % 30 == 0:
@@ -630,9 +650,6 @@ class GestureProcessor:
                         frames_without_detection += 1
                         self.current_finger_count = 0
                         
-                        # Send MQTT for no hand state
-                        send_mqtt_gesture(0, "No Hand", False)
-                        
                         # Emit no-hand state
                         self._emit_async("gesture_update", {
                             "fingerCount": 0,
@@ -641,6 +658,7 @@ class GestureProcessor:
                             "handDetected": False,
                             "lastAction": self.ha_client.last_action,
                             "haConnected": self.ha_client.connected,
+                            "gestureEnabled": self.ha_client.gesture_enabled,  # NEW
                             "timestamp": datetime.now().isoformat(),
                             "entityStates": self.ha_client.entity_states if self.ha_client else {}
                         })
@@ -653,13 +671,14 @@ class GestureProcessor:
                         gesture_counts = Counter(recent_frames)
                         most_common = gesture_counts.most_common(1)[0]
                         stable = most_common[0]
+                        confidence = most_common[1] / len(recent_frames)
                         
-                        # 🔥 STEP 4: Strong stability - only trigger when ALL frames match
-                        if most_common[1] == config["stability_frames"]:
+                        # Only trigger on stable gesture
+                        if confidence >= 0.5:  # Lower threshold for better response
                             if stable != self.current_stable_gesture:
                                 self.current_stable_gesture = stable
                                 self.current_finger_count = stable
-                                logger.info(f"🎭 Stable gesture detected: {stable} fingers (perfect match)")
+                                logger.info(f"🎭 Stable gesture detected: {stable} fingers (confidence: {confidence:.2f})")
                                 
                                 # Trigger HA action
                                 asyncio.run_coroutine_threadsafe(
@@ -669,10 +688,6 @@ class GestureProcessor:
                                 
                                 # Emit gesture event
                                 gesture_info = get_gesture_info(stable)
-                                
-                                # Send MQTT for stable gesture
-                                send_mqtt_gesture(stable, gesture_info["name"], True)
-                                
                                 self._emit_async("gesture", {
                                     "fingerCount": stable,
                                     "gestureName": gesture_info["name"],
@@ -680,7 +695,8 @@ class GestureProcessor:
                                     "handDetected": True,
                                     "lastAction": self.ha_client.last_action,
                                     "haConnected": self.ha_client.connected,
-                                    "confidence": 1.0,
+                                    "gestureEnabled": self.ha_client.gesture_enabled,  # NEW
+                                    "confidence": confidence,
                                     "timestamp": datetime.now().isoformat()
                                 })
                             else:
@@ -693,9 +709,6 @@ class GestureProcessor:
                         gesture_info = get_gesture_info(self.current_finger_count)
                         gesture_name = gesture_info["name"]
                         gesture_icon = gesture_info["icon"]
-                        
-                        # Send MQTT for current gesture state
-                        send_mqtt_gesture(self.current_finger_count, gesture_name, True)
                     else:
                         gesture_name = "No Hand"
                         gesture_icon = "🤚"
@@ -707,6 +720,7 @@ class GestureProcessor:
                         "handDetected": self.hand_detected,
                         "lastAction": self.ha_client.last_action,
                         "haConnected": self.ha_client.connected,
+                        "gestureEnabled": self.ha_client.gesture_enabled,  # NEW
                         "timestamp": datetime.now().isoformat(),
                         "entityStates": self.ha_client.entity_states if self.ha_client else {}
                     })
@@ -757,6 +771,7 @@ class GestureServer:
             await self.sio.emit("status", {
                 "status": "connected",
                 "haConnected": self.ha_client.connected if self.ha_client else False,
+                "gestureEnabled": self.ha_client.gesture_enabled if self.ha_client else False,  # NEW
                 "message": "Connected to server"
             })
             # Send current entity states
@@ -775,6 +790,15 @@ class GestureServer:
             if self.ha_client:
                 await self.sio.emit("entity_config", {
                     "entities": self.ha_client.entities
+                })
+        
+        @self.sio.on("get_gesture_status")  # NEW: Get gesture toggle status
+        async def handle_get_gesture_status(sid):
+            """Send current gesture enabled status"""
+            if self.ha_client:
+                await self.sio.emit("gesture_toggle", {
+                    "enabled": self.ha_client.gesture_enabled,
+                    "timestamp": datetime.now().isoformat()
                 })
     
     async def serve_index(self, request):
@@ -853,11 +877,9 @@ class GestureServer:
             "gesture_running": self.gesture_processor.running if self.gesture_processor else False,
             "current_gesture": self.gesture_processor.current_finger_count if self.gesture_processor else 0,
             "hand_detected": self.gesture_processor.hand_detected if self.gesture_processor else False,
+            "gesture_enabled": self.ha_client.gesture_enabled if self.ha_client else False,  # NEW
             "fps": config["fps"],
             "current_fps": self.gesture_processor.current_fps if self.gesture_processor else 0,
-            "mqtt_enabled": True,
-            "mqtt_broker": config["mqtt_broker"],
-            "mqtt_topic": config["mqtt_topic"],
             "uptime": datetime.now().isoformat()
         })
     
@@ -872,9 +894,7 @@ class GestureServer:
             "tracking_confidence": config["tracking_confidence"],
             "reset_gesture": config["reset_gesture"],
             "stability_frames": config["stability_frames"],
-            "mqtt_broker": config["mqtt_broker"],
-            "mqtt_port": config["mqtt_port"],
-            "mqtt_topic": config["mqtt_topic"],
+            "gesture_control_entity": config.get("gesture_control_entity", ""),  # NEW
             "entities": {
                 "entity_1": config.get("entity_1", ""),
                 "entity_2": config.get("entity_2", ""),
@@ -888,7 +908,7 @@ class GestureServer:
         """Start the server and initialize components"""
         # Print startup banner
         logger.info("=" * 60)
-        logger.info("🎮 Starting Gesture Control Add-on v2.0 (with MQTT)")
+        logger.info("🎮 Starting Gesture Control Add-on v2.1")
         logger.info("=" * 60)
         logger.info(f"📹 RTSP URL: {'✅ Configured' if config['rtsp_url'] != 'rtsp://your-camera-ip:554/stream' else '⚠️ Using default'}")
         logger.info(f"💡 Entity 1: {config.get('entity_1', 'Not configured')}")
@@ -896,6 +916,7 @@ class GestureServer:
         logger.info(f"💡 Entity 3: {config.get('entity_3', 'Not configured')}")
         logger.info(f"💡 Entity 4: {config.get('entity_4', 'Not configured')}")
         logger.info(f"💡 Entity 5: {config.get('entity_5', 'Not configured')}")
+        logger.info(f"🎛 Gesture Control Entity: {config.get('gesture_control_entity', 'Not configured')}")  # NEW
         logger.info(f"🔄 Reset Gesture: {config['reset_gesture']} fingers")
         logger.info(f"⏱️  Cooldown: {config['cooldown_seconds']}s")
         logger.info(f"🎯 Detection Confidence: {config['detection_confidence']}")
@@ -904,8 +925,6 @@ class GestureServer:
         logger.info(f"⚡ Target FPS: {config['fps']}")
         logger.info(f"🔌 HA URL: {config['ha_url']}")
         logger.info(f"🔑 HA Token: {config['ha_token'][:20]}..." if config['ha_token'] else "⚠️ No token set")
-        logger.info(f"📡 MQTT Broker: {config['mqtt_broker']}:{config['mqtt_port']}")
-        logger.info(f"📡 MQTT Topic: {config['mqtt_topic']}")
         logger.info("=" * 60)
         
         # Initialize HA client with entities dictionary
@@ -926,10 +945,15 @@ class GestureServer:
         )
         self.ha_client.set_loop(asyncio.get_event_loop())
         
+        # NEW: Set gesture control entity
+        self.ha_client.gesture_control_entity = config.get("gesture_control_entity", "input_boolean.gesture_control")
+        
         # Connect to HA
         connected = await self.ha_client.connect()
         if not connected:
             logger.error("❌ Failed to connect to HA! Check your token and URL")
+        else:
+            logger.info(f"✅ Gesture control initially: {'ON' if self.ha_client.gesture_enabled else 'OFF'}")
         
         # Start gesture processor in background thread
         self.gesture_processor = GestureProcessor(self.ha_client, self.sio)
@@ -970,6 +994,7 @@ class GestureServer:
                     await self.sio.emit("status", {
                         "status": "ha_reconnected",
                         "haConnected": self.ha_client.connected,
+                        "gestureEnabled": self.ha_client.gesture_enabled,
                         "message": "Reconnected to Home Assistant"
                     })
 
