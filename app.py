@@ -159,17 +159,103 @@ class HAClient:
         self.last_action = ""
         self.loop = None
         self.reconnect_task = None
-        self.event_listener_task = None  # NEW: track event listener task
+        self.event_listener_task = None  # NEW: Track event listener
         
-        # NEW: Gesture control toggle
+        # NEW: Gesture control toggle variables
         self.gesture_control_entity = ""
-        self.gesture_enabled = True
+        self.gesture_enabled = True  # Default to True, will be updated after fetching state
         
         # Track toggled state for each entity
         self.entity_states = {i: False for i in range(1, 6)}
         
     def set_loop(self, loop):
         self.loop = loop
+    
+    # NEW: Fetch entity state from HA
+    async def get_entity_state(self, entity_id):
+        """Fetch current state of entity from HA"""
+        if not self.connected or not self.ws:
+            return None
+
+        try:
+            msg_id = int(time.time() * 1000)
+
+            request = {
+                "id": msg_id,
+                "type": "get_states"
+            }
+
+            await self.ws.send_json(request)
+
+            while True:
+                msg = await self.ws.receive_json()
+
+                if msg.get("id") == msg_id:
+                    for entity in msg.get("result", []):
+                        if entity.get("entity_id") == entity_id:
+                            return entity.get("state")
+                    break
+
+        except Exception as e:
+            logger.error(f"❌ Failed to get entity state: {e}")
+
+        return None
+    
+    # NEW: Listen for state changes
+    async def listen_events(self):
+        """Listen to HA events continuously for gesture control toggle"""
+        logger.info("🎧 Starting event listener for gesture control")
+        
+        while self.connected:
+            try:
+                msg = await self.ws.receive_json()
+                
+                if msg.get("type") == "event":
+                    event_data = msg.get("event", {})
+                    event_type = event_data.get("event_type")
+                    
+                    if event_type == "state_changed":
+                        data = event_data.get("data", {})
+                        entity_id = data.get("entity_id")
+                        
+                        # Check if this is our gesture control entity
+                        if entity_id == self.gesture_control_entity:
+                            new_state = data.get("new_state", {})
+                            state_value = new_state.get("state")
+                            
+                            # Update gesture enabled status
+                            old_state = self.gesture_enabled
+                            self.gesture_enabled = (state_value == "on")
+                            
+                            if old_state != self.gesture_enabled:
+                                logger.info(f"🎛 Gesture Control toggled: {'ON ✅' if self.gesture_enabled else 'OFF ❌'} (entity: {entity_id})")
+                                
+                                # Emit status update via Socket.IO if available
+                                if hasattr(self, 'sio_server') and self.sio_server:
+                                    await self.sio_server.emit("gesture_toggle", {
+                                        "enabled": self.gesture_enabled,
+                                        "timestamp": datetime.now().isoformat()
+                                    })
+                
+                elif msg.get("type") == "auth_required":
+                    logger.warning("⚠️ Auth required again during event listening")
+                    self.connected = False
+                    break
+                    
+                elif msg.get("type") == "auth_invalid":
+                    logger.error("❌ Auth invalid during event listening")
+                    self.connected = False
+                    break
+                    
+            except asyncio.CancelledError:
+                logger.info("Event listener cancelled")
+                break
+            except Exception as e:
+                logger.error(f"❌ Event listener error: {e}")
+                self.connected = False
+                break
+        
+        logger.info("🎧 Event listener stopped")
         
     async def connect(self):
         """Connect to Home Assistant WebSocket"""
@@ -214,10 +300,22 @@ class HAClient:
                     if entity_id:
                         await self.subscribe_to_entity(entity_id)
                 
+                # NEW: Get initial state of gesture control entity
+                if self.gesture_control_entity:
+                    logger.info(f"🔍 Fetching initial state for {self.gesture_control_entity}")
+                    state = await self.get_entity_state(self.gesture_control_entity)
+                    
+                    if state is not None:
+                        self.gesture_enabled = (state == "on")
+                        logger.info(f"🎛 Initial Gesture Control State: {state} ({'ENABLED ✅' if self.gesture_enabled else 'DISABLED ❌'})")
+                    else:
+                        logger.warning(f"⚠️ Could not fetch gesture control state, using default: ENABLED")
+                        self.gesture_enabled = True
+                
                 # NEW: Start event listener task
                 if self.event_listener_task is None or self.event_listener_task.done():
                     self.event_listener_task = asyncio.create_task(self.listen_events())
-                    logger.info("📡 Started event listener")
+                    logger.info("📡 Started event listener for gesture control")
                 
                 return True
             elif msg.get("type") == "auth_invalid":
@@ -251,62 +349,6 @@ class HAClient:
             logger.info(f"📡 Subscribed to state changes")
         except Exception as e:
             logger.error(f"❌ Failed to subscribe: {e}")
-    
-    # NEW: Listen to events from Home Assistant
-    async def listen_events(self):
-        """Listen to HA events continuously"""
-        logger.info("🎧 Starting event listener for gesture control toggle")
-        
-        while self.connected:
-            try:
-                msg = await self.ws.receive_json()
-                
-                if msg.get("type") == "event":
-                    event_data = msg.get("event", {})
-                    event_type = event_data.get("event_type")
-                    
-                    # Handle state_changed events
-                    if event_type == "state_changed":
-                        data = event_data.get("data", {})
-                        entity_id = data.get("entity_id")
-                        
-                        # Check if this is our gesture control entity
-                        if entity_id == self.gesture_control_entity:
-                            new_state = data.get("new_state", {})
-                            state_value = new_state.get("state")
-                            
-                            # Update gesture enabled status
-                            self.gesture_enabled = (state_value == "on")
-                            
-                            logger.info(f"🎛 Gesture Control toggled: {'ON ✅' if self.gesture_enabled else 'OFF ❌'} (entity: {entity_id})")
-                            
-                            # Emit status update via Socket.IO if available
-                            if hasattr(self, 'sio_server') and self.sio_server:
-                                await self.sio_server.emit("gesture_toggle", {
-                                    "enabled": self.gesture_enabled,
-                                    "timestamp": datetime.now().isoformat()
-                                })
-                
-                elif msg.get("type") == "auth_required":
-                    # Re-authentication might be needed
-                    logger.warning("⚠️ Auth required again during event listening")
-                    self.connected = False
-                    break
-                    
-                elif msg.get("type") == "auth_invalid":
-                    logger.error("❌ Auth invalid during event listening")
-                    self.connected = False
-                    break
-                    
-            except asyncio.CancelledError:
-                logger.info("Event listener cancelled")
-                break
-            except Exception as e:
-                logger.error(f"❌ Event listener error: {e}")
-                self.connected = False
-                break
-        
-        logger.info("🎧 Event listener stopped")
     
     async def toggle_entity(self, entity_num, entity_id):
         """Toggle an entity (on/off)"""
@@ -792,7 +834,7 @@ class GestureServer:
                     "entities": self.ha_client.entities
                 })
         
-        @self.sio.on("get_gesture_status")  # NEW: Get gesture toggle status
+        @self.sio.on("get_gesture_status")  # NEW
         async def handle_get_gesture_status(sid):
             """Send current gesture enabled status"""
             if self.ha_client:
@@ -953,7 +995,7 @@ class GestureServer:
         if not connected:
             logger.error("❌ Failed to connect to HA! Check your token and URL")
         else:
-            logger.info(f"✅ Gesture control initially: {'ON' if self.ha_client.gesture_enabled else 'OFF'}")
+            logger.info(f"✅ Gesture control initial state: {'ON ✅' if self.ha_client.gesture_enabled else 'OFF ❌'}")
         
         # Start gesture processor in background thread
         self.gesture_processor = GestureProcessor(self.ha_client, self.sio)
