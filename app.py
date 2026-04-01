@@ -3,8 +3,6 @@
 Gesture Control Add-on for Home Assistant
 Enhanced with 5-entity support and improved gesture detection
 Fixed for stability, CPU efficiency, and auto-recovery
-Added gesture control toggle via input_boolean
-FIXED: Event listener auto-restart and connection stability
 """
 
 import asyncio
@@ -47,16 +45,15 @@ def load_config():
             "entity_3": "light.light_3",
             "entity_4": "light.light_4",
             "entity_5": "light.light_5",
-            "fps": 10,  # REDUCED: 15 → 10 for better stability
-            "frame_width": 480,  # REDUCED: 640 → 480
-            "frame_height": 360,  # REDUCED: 480 → 360
+            "fps": 10,
+            "frame_width": 480,
+            "frame_height": 360,
             "bitrate": "500k",
             "cooldown_seconds": 1,
             "detection_confidence": 0.5,
             "tracking_confidence": 0.5,
             "reset_gesture": 0,
-            "stability_frames": 3,  # REDUCED: 5 → 3 for faster response
-            "gesture_control_entity": "input_boolean.gesture_control",  # NEW
+            "stability_frames": 3,
         }
     
     # Ensure all keys exist
@@ -70,7 +67,6 @@ def load_config():
         "tracking_confidence": 0.5,
         "reset_gesture": 0,
         "stability_frames": 3,
-        "gesture_control_entity": "input_boolean.gesture_control",  # NEW
     }
     for key, value in defaults.items():
         if key not in config:
@@ -160,11 +156,6 @@ class HAClient:
         self.last_action = ""
         self.loop = None
         self.reconnect_task = None
-        self.event_listener_task = None  # NEW: Track event listener
-        
-        # NEW: Gesture control toggle variables
-        self.gesture_control_entity = ""
-        self.gesture_enabled = True  # Default to True, will be updated after fetching state
         
         # Track toggled state for each entity
         self.entity_states = {i: False for i in range(1, 6)}
@@ -172,7 +163,7 @@ class HAClient:
     def set_loop(self, loop):
         self.loop = loop
     
-    # NEW: Send gesture display to HA input_text
+    # Send gesture display to HA input_text
     async def send_gesture_display(self, emoji):
         """Send gesture emoji to HA input_text (UI only)"""
         try:
@@ -194,113 +185,6 @@ class HAClient:
 
         except Exception as e:
             logger.error(f"Gesture display error: {e}")
-    
-    # NEW: Fetch entity state from HA
-    async def get_entity_state(self, entity_id):
-        """Fetch current state of entity from HA"""
-        if not self.connected or not self.ws:
-            return None
-
-        try:
-            msg_id = int(time.time() * 1000)
-
-            request = {
-                "id": msg_id,
-                "type": "get_states"
-            }
-
-            await self.ws.send_json(request)
-
-            while True:
-                msg = await self.ws.receive_json()
-
-                if msg.get("id") == msg_id:
-                    for entity in msg.get("result", []):
-                        if entity.get("entity_id") == entity_id:
-                            return entity.get("state")
-                    break
-
-        except Exception as e:
-            logger.error(f"❌ Failed to get entity state: {e}")
-
-        return None
-    
-    # FIXED: Listen for state changes with timeout protection
-    async def listen_events(self):
-        """Listen to HA events continuously for gesture control toggle"""
-        logger.info("🎧 Starting event listener for gesture control")
-        
-        while self.connected:
-            try:
-                # 🔥 FIX 2: Add timeout protection
-                msg = await asyncio.wait_for(self.ws.receive_json(), timeout=30)
-                
-                if msg.get("type") == "event":
-                    event_data = msg.get("event", {})
-                    event_type = event_data.get("event_type")
-                    
-                    if event_type == "state_changed":
-                        data = event_data.get("data", {})
-                        entity_id = data.get("entity_id")
-                        
-                        # Check if this is our gesture control entity
-                        if entity_id == self.gesture_control_entity:
-                            new_state = data.get("new_state", {})
-                            state_value = new_state.get("state")
-                            
-                            # Update gesture enabled status
-                            old_state = self.gesture_enabled
-                            self.gesture_enabled = (state_value == "on")
-                            
-                            if old_state != self.gesture_enabled:
-                                logger.info(f"🎛 Gesture Control toggled: {'ON ✅' if self.gesture_enabled else 'OFF ❌'} (entity: {entity_id})")
-                                
-                                # Log current state for debugging
-                                logger.info(f"🎛 Gesture Enabled: {self.gesture_enabled}")
-                                
-                                # Emit status update via Socket.IO if available
-                                if hasattr(self, 'sio_server') and self.sio_server:
-                                    await self.sio_server.emit("gesture_toggle", {
-                                        "enabled": self.gesture_enabled,
-                                        "timestamp": datetime.now().isoformat()
-                                    })
-                
-                elif msg.get("type") == "auth_required":
-                    logger.warning("⚠️ Auth required again during event listening")
-                    self.connected = False
-                    break
-                    
-                elif msg.get("type") == "auth_invalid":
-                    logger.error("❌ Auth invalid during event listening")
-                    self.connected = False
-                    break
-                    
-            except asyncio.TimeoutError:
-                logger.warning("⚠️ No events received (timeout 30s) → reconnecting")
-                self.connected = False
-                break
-            except asyncio.CancelledError:
-                logger.info("Event listener cancelled")
-                break
-            except Exception as e:
-                logger.error(f"❌ Event listener error: {e}")
-                self.connected = False
-                break
-        
-        logger.info("🎧 Event listener stopped")
-    
-    # 🔥 FIX 1: Auto-restart event listener
-    async def start_event_listener_with_restart(self):
-        """Start event listener with automatic restart on failure"""
-        while True:
-            try:
-                await self.listen_events()
-            except Exception as e:
-                logger.error(f"🔁 Event listener crashed, restarting... {e}")
-            
-            # Small delay before restart to avoid tight loop
-            await asyncio.sleep(1)
-            logger.info("🔄 Restarting event listener...")
     
     async def connect(self):
         """Connect to Home Assistant WebSocket"""
@@ -338,27 +222,6 @@ class HAClient:
             if msg.get("type") == "auth_ok":
                 self.connected = True
                 logger.info("✅ HA WebSocket connected and authenticated")
-                
-                # 🔥 FIX 4: Subscribe once for state changes
-                await self.subscribe_to_state_changes()
-                
-                # NEW: Get initial state of gesture control entity
-                if self.gesture_control_entity:
-                    logger.info(f"🔍 Fetching initial state for {self.gesture_control_entity}")
-                    state = await self.get_entity_state(self.gesture_control_entity)
-                    
-                    if state is not None:
-                        self.gesture_enabled = (state == "on")
-                        logger.info(f"🎛 Initial Gesture Control State: {state} ({'ENABLED ✅' if self.gesture_enabled else 'DISABLED ❌'})")
-                    else:
-                        logger.warning(f"⚠️ Could not fetch gesture control state, using default: ENABLED")
-                        self.gesture_enabled = True
-                
-                # 🔥 FIX 1: Start auto-restart event listener
-                if self.event_listener_task is None or self.event_listener_task.done():
-                    self.event_listener_task = asyncio.create_task(self.start_event_listener_with_restart())
-                    logger.info("📡 Started event listener with auto-restart")
-                
                 return True
             elif msg.get("type") == "auth_invalid":
                 logger.error(f"❌ HA auth invalid: {msg.get('message', 'Invalid token')}")
@@ -374,24 +237,6 @@ class HAClient:
             logger.error(f"❌ HA connection error: {e}")
             self.connected = False
             return False
-    
-    # 🔥 FIX 4: Subscribe to state changes once
-    async def subscribe_to_state_changes(self):
-        """Subscribe to state changes"""
-        if not self.connected or not self.ws:
-            return
-        
-        try:
-            msg_id = int(time.time() * 1000)
-            subscribe_msg = {
-                "id": msg_id,
-                "type": "subscribe_events",
-                "event_type": "state_changed"
-            }
-            await self.ws.send_json(subscribe_msg)
-            logger.info(f"📡 Subscribed to state_changed events")
-        except Exception as e:
-            logger.error(f"❌ Failed to subscribe: {e}")
     
     async def toggle_entity(self, entity_num, entity_id):
         """Toggle an entity (on/off)"""
@@ -468,7 +313,7 @@ class HAClient:
     
     async def handle_gesture(self, finger_count):
         """Handle gesture and trigger HA actions with cooldown"""
-        # 🔥 SEND TO UI (NO LOGIC CHANGE)
+        # Send to UI
         gesture_map = {
             0: "✊",
             1: "☝️",
@@ -480,11 +325,6 @@ class HAClient:
         
         if finger_count in gesture_map:
             await self.send_gesture_display(gesture_map[finger_count])
-        
-        # 🔥 FIX 3: FINAL SAFETY CHECK - Block gestures if control entity is OFF
-        if not self.gesture_enabled:
-            logger.debug(f"⛔ Gesture blocked (control OFF) - {finger_count} fingers")
-            return False
         
         if not self.connected:
             logger.warning(f"⚠️ HA disconnected → trying reconnect before gesture: {finger_count} fingers")
@@ -525,14 +365,6 @@ class HAClient:
     
     async def disconnect(self):
         """Disconnect from Home Assistant"""
-        # Cancel event listener task
-        if self.event_listener_task and not self.event_listener_task.done():
-            self.event_listener_task.cancel()
-            try:
-                await self.event_listener_task
-            except asyncio.CancelledError:
-                pass
-        
         if self.ws:
             await self.ws.close()
         if self.session and not self.session.closed:
@@ -694,7 +526,7 @@ class GestureProcessor:
                 
                 self.frame_count += 1
                 
-                # Process every other frame to reduce CPU load (NO CORRUPTION)
+                # Process every other frame to reduce CPU load
                 if self.frame_count % 2 != 0:
                     continue
                 
@@ -707,8 +539,7 @@ class GestureProcessor:
                 
                 # Debug every 100 frames
                 if self.frame_count % 100 == 0:
-                    gesture_status = "ON ✅" if self.ha_client.gesture_enabled else "OFF ❌"
-                    logger.info(f"📊 Stats: FPS: {self.current_fps}, Detections: {self.detection_count}, Hand: {self.hand_detected}, Gesture: {self.current_stable_gesture}, HA: {'✓' if self.ha_client.connected else '✗'}, Control: {gesture_status}")
+                    logger.info(f"📊 Stats: FPS: {self.current_fps}, Detections: {self.detection_count}, Hand: {self.hand_detected}, Gesture: {self.current_stable_gesture}, HA: {'✓' if self.ha_client.connected else '✗'}")
                     self.last_debug_time = time.time()
                     self.detection_count = 0
                 
@@ -716,7 +547,7 @@ class GestureProcessor:
                     # FLIP FIRST (mirror effect for natural interaction)
                     frame = cv2.flip(frame, 1)
                     
-                    # Convert to RGB directly from original frame (NO RESIZE)
+                    # Convert to RGB directly from original frame
                     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     
                     # Process with MediaPipe
@@ -740,7 +571,7 @@ class GestureProcessor:
                         if self.detection_count % 30 == 0:
                             logger.info(f"✋ Hand detected - {finger_count} fingers")
                     
-                    # CRITICAL FIX: Clear history when no hand detected
+                    # Clear history when no hand detected
                     if self.hand_detected:
                         self.gesture_history.append(finger_count)
                     else:
@@ -756,7 +587,6 @@ class GestureProcessor:
                             "handDetected": False,
                             "lastAction": self.ha_client.last_action,
                             "haConnected": self.ha_client.connected,
-                            "gestureEnabled": self.ha_client.gesture_enabled,  # NEW
                             "timestamp": datetime.now().isoformat(),
                             "entityStates": self.ha_client.entity_states if self.ha_client else {}
                         })
@@ -793,7 +623,6 @@ class GestureProcessor:
                                     "handDetected": True,
                                     "lastAction": self.ha_client.last_action,
                                     "haConnected": self.ha_client.connected,
-                                    "gestureEnabled": self.ha_client.gesture_enabled,  # NEW
                                     "confidence": confidence,
                                     "timestamp": datetime.now().isoformat()
                                 })
@@ -818,7 +647,6 @@ class GestureProcessor:
                         "handDetected": self.hand_detected,
                         "lastAction": self.ha_client.last_action,
                         "haConnected": self.ha_client.connected,
-                        "gestureEnabled": self.ha_client.gesture_enabled,  # NEW
                         "timestamp": datetime.now().isoformat(),
                         "entityStates": self.ha_client.entity_states if self.ha_client else {}
                     })
@@ -869,7 +697,6 @@ class GestureServer:
             await self.sio.emit("status", {
                 "status": "connected",
                 "haConnected": self.ha_client.connected if self.ha_client else False,
-                "gestureEnabled": self.ha_client.gesture_enabled if self.ha_client else False,  # NEW
                 "message": "Connected to server"
             })
             # Send current entity states
@@ -888,15 +715,6 @@ class GestureServer:
             if self.ha_client:
                 await self.sio.emit("entity_config", {
                     "entities": self.ha_client.entities
-                })
-        
-        @self.sio.on("get_gesture_status")  # NEW
-        async def handle_get_gesture_status(sid):
-            """Send current gesture enabled status"""
-            if self.ha_client:
-                await self.sio.emit("gesture_toggle", {
-                    "enabled": self.ha_client.gesture_enabled,
-                    "timestamp": datetime.now().isoformat()
                 })
     
     async def serve_index(self, request):
@@ -975,7 +793,6 @@ class GestureServer:
             "gesture_running": self.gesture_processor.running if self.gesture_processor else False,
             "current_gesture": self.gesture_processor.current_finger_count if self.gesture_processor else 0,
             "hand_detected": self.gesture_processor.hand_detected if self.gesture_processor else False,
-            "gesture_enabled": self.ha_client.gesture_enabled if self.ha_client else False,  # NEW
             "fps": config["fps"],
             "current_fps": self.gesture_processor.current_fps if self.gesture_processor else 0,
             "uptime": datetime.now().isoformat()
@@ -992,7 +809,6 @@ class GestureServer:
             "tracking_confidence": config["tracking_confidence"],
             "reset_gesture": config["reset_gesture"],
             "stability_frames": config["stability_frames"],
-            "gesture_control_entity": config.get("gesture_control_entity", ""),  # NEW
             "entities": {
                 "entity_1": config.get("entity_1", ""),
                 "entity_2": config.get("entity_2", ""),
@@ -1014,7 +830,6 @@ class GestureServer:
         logger.info(f"💡 Entity 3: {config.get('entity_3', 'Not configured')}")
         logger.info(f"💡 Entity 4: {config.get('entity_4', 'Not configured')}")
         logger.info(f"💡 Entity 5: {config.get('entity_5', 'Not configured')}")
-        logger.info(f"🎛 Gesture Control Entity: {config.get('gesture_control_entity', 'Not configured')}")  # NEW
         logger.info(f"🔄 Reset Gesture: {config['reset_gesture']} fingers")
         logger.info(f"⏱️  Cooldown: {config['cooldown_seconds']}s")
         logger.info(f"🎯 Detection Confidence: {config['detection_confidence']}")
@@ -1043,15 +858,10 @@ class GestureServer:
         )
         self.ha_client.set_loop(asyncio.get_event_loop())
         
-        # NEW: Set gesture control entity
-        self.ha_client.gesture_control_entity = config.get("gesture_control_entity", "input_boolean.gesture_control")
-        
         # Connect to HA
         connected = await self.ha_client.connect()
         if not connected:
             logger.error("❌ Failed to connect to HA! Check your token and URL")
-        else:
-            logger.info(f"✅ Gesture control initial state: {'ON ✅' if self.ha_client.gesture_enabled else 'OFF ❌'}")
         
         # Start gesture processor in background thread
         self.gesture_processor = GestureProcessor(self.ha_client, self.sio)
@@ -1079,11 +889,11 @@ class GestureServer:
     async def _ha_keepalive(self):
         """Keep HA connection alive + fast reconnect"""
         while True:
-            await asyncio.sleep(5)  # 🔥 faster check (changed from 30 to 5 seconds)
+            await asyncio.sleep(5)  # faster check
             
             if self.ha_client:
                 if self.ha_client.connected:
-                    # 💓 Send ping instead of doing nothing
+                    # Send ping instead of doing nothing
                     await self.ha_client.send_ping()
                 else:
                     logger.warning("🔄 HA disconnected → reconnecting immediately...")
@@ -1092,7 +902,6 @@ class GestureServer:
                     await self.sio.emit("status", {
                         "status": "ha_reconnected",
                         "haConnected": self.ha_client.connected,
-                        "gestureEnabled": self.ha_client.gesture_enabled,
                         "message": "Reconnected to Home Assistant"
                     })
 
