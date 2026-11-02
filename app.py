@@ -13,6 +13,8 @@ import logging
 import math
 import os
 from pathlib import Path
+import signal
+import sys
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -823,21 +825,31 @@ class GestureProcessor:
         cam_src = config.get("camera_source", "0").strip()
 
         if self.cap:
-            self.cap.release()
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+            self.cap = None
 
         if rtsp:
             logger.info(f"Connecting to RTSP Camera stream: {rtsp}")
-            self.cap = cv2.VideoCapture(rtsp)
+            # Enforce TCP transport for RTSP to prevent packet corruption and H.264/H.265 frame reference loss
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+            self.cap = cv2.VideoCapture(rtsp, cv2.CAP_FFMPEG)
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         else:
             try:
                 src_idx = int(cam_src)
             except ValueError:
                 src_idx = 0
-            logger.info(f"Opening Local Camera index {src_idx} with DSHOW...")
-            self.cap = cv2.VideoCapture(src_idx, cv2.CAP_DSHOW)
+            if sys.platform.startswith("win"):
+                logger.info(f"Opening Local Camera index {src_idx} with DSHOW...")
+                self.cap = cv2.VideoCapture(src_idx, cv2.CAP_DSHOW)
+            else:
+                logger.info(f"Opening Local Camera index {src_idx}...")
+                self.cap = cv2.VideoCapture(src_idx)
 
-        if not self.cap.isOpened():
+        if not self.cap or not self.cap.isOpened():
             logger.error("Failed to open camera device!")
             return False
 
@@ -863,11 +875,11 @@ class GestureProcessor:
             ret, frame = self.cap.read()
             if not ret or frame is None:
                 reconnect_attempts += 1
-                if reconnect_attempts >= 5:
-                    logger.warning("Camera disconnected, reconnecting...")
+                if reconnect_attempts >= 30:
+                    logger.warning("Camera stream interrupted for 3s, reconnecting...")
                     self._open_camera()
                     reconnect_attempts = 0
-                time.sleep(0.05)
+                time.sleep(0.1)
                 continue
 
             reconnect_attempts = 0
@@ -1383,7 +1395,7 @@ class GestureServer:
         save_config_to_env(config)
         return aiohttp.web.json_response({"success": True})
 
-    async def start(self):
+    async def start(self, stop_event: Optional[asyncio.Event] = None):
         logger.info("=" * 60)
         logger.info("🖐️ Starting Drasis Gesture Control Add-on + ChatGPT AI Verification")
         logger.info(f"🤖 OpenAI Model: {config.get('openai_model')}")
@@ -1420,7 +1432,10 @@ class GestureServer:
         logger.info(f"🌐 Web Server started on http://localhost:{port}/")
         logger.info("=" * 60)
 
-        await asyncio.Event().wait()
+        if stop_event:
+            await stop_event.wait()
+        else:
+            await asyncio.Event().wait()
 
     async def _ha_keepalive(self):
         while True:
@@ -1435,9 +1450,21 @@ class GestureServer:
 
 def main():
     server = GestureServer()
+    stop_event = asyncio.Event()
+
+    def _sig_handler(*_):
+        logger.info("Received termination signal, shutting down...")
+        stop_event.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, _sig_handler)
+        except Exception:
+            pass
+
     try:
-        asyncio.run(server.start())
-    except KeyboardInterrupt:
+        asyncio.run(server.start(stop_event))
+    except (KeyboardInterrupt, SystemExit):
         logger.info("Shutting down...")
     finally:
         if server.gesture_processor:

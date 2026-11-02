@@ -1,5 +1,5 @@
-#!/usr/bin/with-contenv bashio
+#!/usr/bin/env bashio
 echo "=========================================================="
 echo " Starting Gesture Control Add-on with ChatGPT AI Verification"
 echo "=========================================================="
-python3 /app/app.py
+exec python3 /app/app.py
