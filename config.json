@@ -3,7 +3,7 @@
   "version": "3.0.0",
   "slug": "gesture_control",
   "description": "Control smart home devices using hand gestures with ChatGPT Vision AI verification to completely eliminate false triggers (phone calls, holding objects, resting posture)",
-  "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
+  "arch": ["amd64", "aarch64"],
   "startup": "application",
   "boot": "auto",
   "host_network": true,
@@ -57,5 +57,5 @@
     "8099/tcp": 8099
   },
   "webui": "http://[HOST]:[PORT:8099]",
-  "map": ["config:rw"]
+  "map": ["homeassistant_config:rw"]
 }
