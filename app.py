@@ -225,82 +225,87 @@ def make_dual_view(
 
 
 # ========== CHATGPT VISION AI VERIFICATION ENGINE ==========
-CHATGPT_SYSTEM_PROMPT = """You are an expert computer vision AI verifier for smart home gesture control.
+CHATGPT_SYSTEM_PROMPT = """You are an expert AI vision verifier for smart home gesture control.
 MediaPipe candidate detection: {gesture_name} ({finger_count} fingers).
 
 You are inspecting a composite image:
-- LEFT: Full scene view showing user posture, environment, and all detected hands (active candidate hand in yellow box, other hands in amber/cyan boxes).
+- LEFT: Full scene context showing the person's face, eyes/gaze, body posture, and all detected hands (active candidate hand in yellow box).
 - RIGHT: Zoomed high-resolution inspection of the active candidate hand.
 
 ========================================================================
-TASK 1: VERIFY INTENTIONAL COMMAND GESTURES (PRIMARY OBJECTIVE)
+MANDATORY TWO-FACTOR VALIDATION (BOTH MUST BE TRUE TO EXECUTE):
 ========================================================================
-Determine if the hand in the yellow box is presenting an INTENTIONAL COMMAND GESTURE:
-1. PALM FACING CAMERA: The inside palm of the hand is facing forward toward the webcam with fingers extended in the air.
-2. 2D WEBCAM PERSPECTIVE (CRITICAL):
-   - When a person sits in front of a webcam, raising their hand naturally places it in front of their chest, neck, shoulder, or chin in 2D perspective.
-   - If the palm is facing the camera in the air, THIS IS A VALID INTENTIONAL GESTURE!
-   - DO NOT misidentify this as touching the face! The hand is in the foreground facing the camera, while the head is behind it.
-3. MULTIPLE HANDS / PEOPLE IN ROOM: There may be multiple hands on screen (idle hand at side, hand resting on desk, or another person in background).
-   If ONE hand is presenting a clean command gesture raised toward the camera, FOCUS ON AND VERIFY THAT GESTURING HAND!
-   Do NOT reject simply because another hand is resting or idle.
-4. ACCEPT CLEAN COMMAND GESTURES: If 1, 2, 3, 4, or 5 fingers are clearly extended upright or diagonally up in the air toward the camera, set is_valid_gesture=true!
+To verify a gesture as valid (is_valid_gesture=true), BOTH factors MUST be satisfied simultaneously. If either factor fails, you MUST reject (is_valid_gesture=false):
+
+FACTOR 1: PERSON MAKING GESTURE MUST BE ACTIVELY LOOKING AT THE CAMERA
+- Look at the person making the gesture in the LEFT panel (full scene view).
+- The person's head, face, and eyes MUST be directed forward toward the camera/screen.
+- The user is intentionally looking at the system to execute a smart home command.
+- REJECT IMMEDIATELY (is_valid_gesture=false) IF:
+  * The person is looking away (e.g., looking to the side, looking up at the ceiling, or looking at another person).
+  * The person is looking down at a smartphone, keyboard, desk, paper, or lap.
+  * The person is facing away or talking to someone else in the room with head turned.
+  * The person's eyes/face are not facing the camera.
+  * If person is NOT looking at camera: set is_valid_gesture=false, person_looking_at_camera=false, rejection_reason="Person Not Looking at Camera".
+
+FACTOR 2: HAND IS INTENTIONALLY PRESENTING A COMMAND GESTURE TO CAMERA
+- The hand highlighted in the yellow box is DELIBERATELY RAISED AND SHOWN TO THE CAMERA as an intentional smart home command.
+- The inside palm is facing forward toward the camera with 1, 2, 3, 4, or 5 fingers clearly and uprightly extended in the air.
+- Note: When a seated person raises their hand, in 2D perspective it appears in front of chest/shoulder/chin. If the palm is facing the camera in the air, THIS IS A VALID INTENTIONAL GESTURE.
+- REJECT IMMEDIATELY (is_valid_gesture=false) IF:
+  * Casual motion: Scratching head, rubbing eye/face, touching hair, or resting chin on hand.
+  * Holding object: Hand is holding a phone, remote, mug, bottle, pen, or item.
+  * Passive resting: Hand is resting flat on a desk, keyboard, armrest, or lap.
+  * Casual conversation: Gesturing with hands while talking to another person.
+  * If hand is not an intentional command: set is_valid_gesture=false, hand_intentionally_showing_gesture=false, rejection_reason="Unintentional Hand Movement / Casual Posture".
 
 ========================================================================
-TASK 2: REJECT CASUAL FALSE TRIGGERS (ONLY IF CLEARLY CASUAL)
-========================================================================
-Only reject (is_valid_gesture=false, is_false_trigger=true) if the hand is clearly NOT a command:
-1. ACTIVELY SCRATCHING / RUBBING BODY: Fingers are visibly curled into hair scratching the scalp, rubbing an eye, or palm is physically pressed flat against cheek/chin supporting head weight.
-   -> rejection_reason: "Scratching/Rubbing Body"
-2. HOLDING PHONE / OBJECT: Hand is holding a smartphone, folding phone, remote, mug, bottle, or object.
-   -> rejection_reason: "Holding Object"
-3. RESTING FLAT: Hand is resting flat on the desk, keyboard, mouse, armrest, or lap.
-   -> rejection_reason: "Resting Posture"
-4. HAND ON HIP: Hand is placed on waist, hip, or belt.
-   -> rejection_reason: "Hand on Hip"
-5. HORIZONTAL / SIDEWAYS: Hand is pointing sideways horizontally across the body, not upright.
-   -> rejection_reason: "Horizontal / Side-Facing"
-
-========================================================================
-TASK 3: EXACT FINGER COUNTING (ZOOMED VIEW ON RIGHT)
+FINGER COUNTING ACCURACY (ZOOMED VIEW ON RIGHT):
 ========================================================================
 Carefully inspect the ZOOMED HAND on the right and count the EXACT extended fingers:
 - 1: 1 Finger (Index upright ☝️)
 - 2: 2 Fingers (Peace sign ✌️: Index+Middle, or L-shape: Thumb+Index)
 - 3: 3 Fingers (Index+Middle+Ring 👌, or Thumb+Index+Middle)
-- 4: 4 FINGERS (All 4 fingers - Index, Middle, Ring, Pinky - upright with THUMB FOLDED INTO PALM)
+- 4: 4 FINGERS (All 4 main fingers - Index, Middle, Ring, Pinky - upright with THUMB FOLDED INTO PALM)
 - 5: 5 FINGERS (Open palm ✋: All 4 main fingers upright PLUS thumb extended outward)
 
 4 VS 5 FINGERS RULE:
-- Look closely at the thumb in the zoomed right panel!
-- If 4 fingers are upright and the THUMB IS FOLDED/CURLED ACROSS THE PALM, IT IS 4 FINGERS!
-  Even if MediaPipe suggested 5 fingers, you MUST override and set:
-  "gesture": "4 Fingers",
-  "verified_finger_count": 4,
-  "is_valid_gesture": true
-- Only verify as 5 fingers if the thumb is visibly extended OUTWARD to the side away from the palm!
+- If 4 fingers are upright and the THUMB IS FOLDED/CURLED INTO THE PALM, you MUST verify as 4 Fingers!
+- Only verify as 5 fingers if the thumb is visibly extended outward to the side away from the palm.
+
+========================================================================
+FINAL VERDICT & EXECUTION DECISION:
+========================================================================
+- If FACTOR 1 (Looking at camera) IS TRUE AND FACTOR 2 (Intentional hand gesture) IS TRUE:
+  --> is_valid_gesture = true, is_false_trigger = false
+- If EITHER factor is FALSE:
+  --> is_valid_gesture = false, is_false_trigger = true
 
 Respond ONLY with valid JSON:
-If valid:
+If valid (will execute):
 {
   "is_valid_gesture": true,
   "is_false_trigger": false,
+  "person_looking_at_camera": true,
+  "hand_intentionally_showing_gesture": true,
   "gesture": "{gesture_name}",
   "verified_finger_count": {finger_count},
   "confidence": 0.98,
   "rejection_reason": "None",
-  "explanation": "Open palm facing camera with fingers extended upward in the air"
+  "explanation": "Person is looking directly at camera and intentionally presenting a clear command gesture."
 }
 
-If false trigger:
+If false trigger (will NOT execute):
 {
   "is_valid_gesture": false,
   "is_false_trigger": true,
+  "person_looking_at_camera": false,
+  "hand_intentionally_showing_gesture": false,
   "gesture": "None",
   "verified_finger_count": 0,
   "confidence": 0.95,
   "rejection_reason": "<rejection_reason>",
-  "explanation": "<concise factual explanation of what hand is doing>"
+  "explanation": "<concise explanation of why rejected>"
 }
 """
 
@@ -399,7 +404,14 @@ class ChatGPTVerifier:
                 result = json.loads(content)
                 result["latency_ms"] = self.last_latency_ms
 
-                is_valid = result.get("is_valid_gesture", False) and not result.get("is_false_trigger", False)
+                person_looking = result.get("person_looking_at_camera", True)
+                hand_intentional = result.get("hand_intentionally_showing_gesture", True)
+                is_valid = (
+                    result.get("is_valid_gesture", False)
+                    and not result.get("is_false_trigger", False)
+                    and person_looking
+                    and hand_intentional
+                )
                 self.latest_snapshot_status = "VERIFIED" if is_valid else "REVOKED"
                 self.last_result = result
 
@@ -609,6 +621,103 @@ class HAClient:
         return True
 
 
+# ========== REAL-TIME THREADED CAMERA STREAM READER ==========
+class CameraStreamReader:
+    """Reads frames from camera/RTSP in a dedicated thread to completely eliminate buffer delay and lag."""
+
+    def __init__(self):
+        self.cap: Optional[cv2.VideoCapture] = None
+        self.running = False
+        self.thread: Optional[threading.Thread] = None
+        self.lock = threading.Lock()
+        self.latest_frame: Optional[np.ndarray] = None
+        self.is_connected = False
+        self.last_frame_time = 0.0
+
+    def start(self):
+        self.running = True
+        self.thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self.thread.start()
+
+    def _open(self) -> bool:
+        rtsp = config.get("rtsp_url", "").strip()
+        cam_src = config.get("camera_source", "0").strip()
+
+        if self.cap:
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+            self.cap = None
+
+        if rtsp:
+            logger.info(f"Connecting to RTSP Camera stream: {rtsp}")
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+            self.cap = cv2.VideoCapture(rtsp, cv2.CAP_FFMPEG)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        else:
+            try:
+                src_idx = int(cam_src)
+            except ValueError:
+                src_idx = 0
+            if sys.platform.startswith("win"):
+                self.cap = cv2.VideoCapture(src_idx, cv2.CAP_DSHOW)
+            else:
+                self.cap = cv2.VideoCapture(src_idx)
+
+        if self.cap and self.cap.isOpened():
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.get("frame_width", 640))
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.get("frame_height", 480))
+            self.cap.set(cv2.CAP_PROP_FPS, config.get("fps", 20))
+            self.is_connected = True
+            self.last_frame_time = time.time()
+            logger.info("✅ Camera stream connected successfully")
+            return True
+
+        self.is_connected = False
+        logger.error("❌ Failed to open camera device!")
+        return False
+
+    def _capture_loop(self):
+        if not self._open():
+            time.sleep(2)
+
+        while self.running:
+            if self.cap is None or not self.cap.isOpened():
+                time.sleep(1.0)
+                self._open()
+                continue
+
+            ret, frame = self.cap.read()
+            if ret and frame is not None:
+                with self.lock:
+                    self.latest_frame = frame
+                    self.last_frame_time = time.time()
+                    self.is_connected = True
+            else:
+                if time.time() - self.last_frame_time > 4.0:
+                    logger.warning("Camera stream stalled for > 4s, reconnecting...")
+                    self._open()
+                    self.last_frame_time = time.time()
+                time.sleep(0.01)
+
+    def get_frame(self) -> Tuple[bool, Optional[np.ndarray]]:
+        with self.lock:
+            if self.latest_frame is not None:
+                return True, self.latest_frame.copy()
+            return False, None
+
+    def stop(self):
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=1.0)
+        if self.cap:
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+
+
 # ========== MEDIAPIPE GESTURE & SKELETON PROCESSOR ==========
 class GestureProcessor:
     """Zero-latency OpenCV & MediaPipe hand detector with ChatGPT AI verification bridge."""
@@ -618,7 +727,7 @@ class GestureProcessor:
         self.sio = sio_server
         self.running = False
         self.thread: Optional[threading.Thread] = None
-        self.cap: Optional[cv2.VideoCapture] = None
+        self.camera_reader = CameraStreamReader()
 
         try:
             self.mp_hands = mp.solutions.hands
@@ -652,8 +761,10 @@ class GestureProcessor:
         self.fist_frame_counter = 0
         self.last_triggered_gesture: Optional[str] = None
 
-        # Video stream frame holder
+        # Video stream frame holder (zero-copy pre-encoded for smooth streaming)
         self.latest_display_frame: Optional[np.ndarray] = None
+        self.latest_jpeg_bytes: Optional[bytes] = None
+        self.frame_id: int = 0
         self.frame_lock = threading.Lock()
 
         # Stats
@@ -816,81 +927,26 @@ class GestureProcessor:
 
     def start(self):
         self.running = True
+        self.camera_reader.start()
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
         self.thread.start()
         logger.info("GestureProcessor thread started")
 
     def stop(self):
         self.running = False
+        self.camera_reader.stop()
         if self.thread:
             self.thread.join(timeout=2.0)
-        if self.cap:
-            self.cap.release()
         logger.info("GestureProcessor thread stopped")
-
-    def _open_camera(self) -> bool:
-        rtsp = config.get("rtsp_url", "").strip()
-        cam_src = config.get("camera_source", "0").strip()
-
-        if self.cap:
-            try:
-                self.cap.release()
-            except Exception:
-                pass
-            self.cap = None
-
-        if rtsp:
-            logger.info(f"Connecting to RTSP Camera stream: {rtsp}")
-            # Enforce TCP transport for RTSP to prevent packet corruption and H.264/H.265 frame reference loss
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
-            self.cap = cv2.VideoCapture(rtsp, cv2.CAP_FFMPEG)
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        else:
-            try:
-                src_idx = int(cam_src)
-            except ValueError:
-                src_idx = 0
-            if sys.platform.startswith("win"):
-                logger.info(f"Opening Local Camera index {src_idx} with DSHOW...")
-                self.cap = cv2.VideoCapture(src_idx, cv2.CAP_DSHOW)
-            else:
-                logger.info(f"Opening Local Camera index {src_idx}...")
-                self.cap = cv2.VideoCapture(src_idx)
-
-        if not self.cap or not self.cap.isOpened():
-            logger.error("Failed to open camera device!")
-            return False
-
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.get("frame_width", 640))
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.get("frame_height", 480))
-        self.cap.set(cv2.CAP_PROP_FPS, config.get("fps", 20))
-        logger.info("Camera successfully opened")
-        return True
 
     def _run_loop(self):
         self.init_mediapipe()
-        if not self._open_camera():
-            time.sleep(2)
-
-        reconnect_attempts = 0
 
         while self.running:
-            if self.cap is None or not self.cap.isOpened():
-                time.sleep(1.0)
-                self._open_camera()
-                continue
-
-            ret, frame = self.cap.read()
+            ret, frame = self.camera_reader.get_frame()
             if not ret or frame is None:
-                reconnect_attempts += 1
-                if reconnect_attempts >= 30:
-                    logger.warning("Camera stream interrupted for 3s, reconnecting...")
-                    self._open_camera()
-                    reconnect_attempts = 0
-                time.sleep(0.1)
+                time.sleep(0.015)
                 continue
-
-            reconnect_attempts = 0
 
             # FPS counter
             self.fps_counter += 1
@@ -905,15 +961,9 @@ class GestureProcessor:
             h, w = frame.shape[:2]
             clean_frame = frame.copy()
 
-            # Multi-pass detection: Adaptive lighting enhancement ensures dark/backlit fingers are captured
-            enhanced_frame = enhance_lighting(frame)
-            rgb_enhanced = cv2.cvtColor(enhanced_frame, cv2.COLOR_BGR2RGB)
-            results = self.hands.process(rgb_enhanced)
-
-            # Fallback pass on raw RGB if enhanced did not find hand
-            if not results.multi_hand_landmarks:
-                rgb_raw = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                results = self.hands.process(rgb_raw)
+            # Fast direct RGB single-pass detection
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = self.hands.process(rgb)
 
             self.hand_detected = False
             detected_count = -1
@@ -1100,11 +1150,16 @@ class GestureProcessor:
             # Render on-screen HUD (Status, Verification Badge, FPS, Reset Prompt)
             self._render_hud(frame, detected_count)
 
-            # Store display frame for MJPEG streaming
+            # Pre-encode JPEG once for instant zero-lag streaming
+            _, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 68])
+            jpeg_bytes = jpeg.tobytes()
+
             with self.frame_lock:
                 self.latest_display_frame = frame
+                self.latest_jpeg_bytes = jpeg_bytes
+                self.frame_id += 1
 
-            time.sleep(0.01)
+            time.sleep(0.005)
 
     def _render_hud(self, frame: np.ndarray, detected_count: int):
         h, w = frame.shape[:2]
@@ -1186,10 +1241,13 @@ class GestureProcessor:
             explanation = ai_res.get("explanation", "")
             latency = ai_res.get("latency_ms", 0.0)
 
+            person_looking = ai_res.get("person_looking_at_camera", True)
+            hand_intentional = ai_res.get("hand_intentionally_showing_gesture", True)
+
             # ========================================================
-            # DECISION: TRIGGER OR REVOKE
+            # DECISION: EXECUTE IF TRUE, DO NOT EXECUTE IF FALSE
             # ========================================================
-            if is_valid and not is_false:
+            if is_valid and not is_false and person_looking and hand_intentional:
                 # VERIFY FINGERS AS WELL WITH AI: Override candidate count if AI verified different finger count
                 ai_count = ai_res.get("verified_finger_count")
                 if ai_count is not None and isinstance(ai_count, int) and 0 <= ai_count <= 5:
@@ -1313,29 +1371,30 @@ class GestureServer:
         return aiohttp.web.FileResponse(index_file)
 
     async def video_stream(self, request):
-        """Cross-platform high-speed MJPEG video stream (works natively in any browser)."""
+        """Zero-latency smooth MJPEG video stream (works natively in any browser)."""
         response = aiohttp.web.StreamResponse()
         response.content_type = "multipart/x-mixed-replace; boundary=frame"
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         await response.prepare(request)
 
+        last_id = -1
         try:
             while True:
-                frame = None
+                frame_bytes = None
                 if self.gesture_processor:
                     with self.gesture_processor.frame_lock:
-                        if self.gesture_processor.latest_display_frame is not None:
-                            frame = self.gesture_processor.latest_display_frame.copy()
+                        if self.gesture_processor.latest_jpeg_bytes is not None:
+                            if self.gesture_processor.frame_id != last_id:
+                                frame_bytes = self.gesture_processor.latest_jpeg_bytes
+                                last_id = self.gesture_processor.frame_id
 
-                if frame is not None:
-                    _, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                    frame_bytes = jpeg.tobytes()
+                if frame_bytes is not None:
                     await response.write(
                         b"--frame\r\n"
                         b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
                     )
-                await asyncio.sleep(0.04)  # ~25 FPS stream
+                await asyncio.sleep(0.03)  # ~33 FPS smooth delivery
         except (ConnectionResetError, asyncio.CancelledError):
             pass
 
