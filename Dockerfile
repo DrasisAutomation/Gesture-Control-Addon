@@ -8,7 +8,6 @@ ENV DEBIAN_FRONTEND noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
-    python3-dev \
     ffmpeg \
     libgl1 \
     libglib2.0-0 \
@@ -17,9 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python requirements
+# Install Python requirements (using pre-compiled binary wheels for speed)
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
+RUN pip3 install --no-cache-dir --prefer-binary --break-system-packages -r requirements.txt
 
 # Copy application files
 COPY app.py .
