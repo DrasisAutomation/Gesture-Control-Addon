@@ -235,29 +235,29 @@ You are inspecting a composite image:
 ========================================================================
 MANDATORY TWO-FACTOR VALIDATION (BOTH MUST BE TRUE TO EXECUTE):
 ========================================================================
-To verify a gesture as valid (is_valid_gesture=true), BOTH factors MUST be satisfied simultaneously. If either factor fails, you MUST reject (is_valid_gesture=false):
+To verify a gesture as valid (is_valid_gesture=true), BOTH factors MUST be satisfied. If either factor fails, you MUST reject (is_valid_gesture=false):
 
-FACTOR 1: PERSON MAKING GESTURE MUST BE ACTIVELY LOOKING AT THE CAMERA
+FACTOR 1: PERSON'S FACE IS IN FRONT OF / ORIENTED TOWARD THE CAMERA
 - Look at the person making the gesture in the LEFT panel (full scene view).
-- The person's head, face, and eyes MUST be directed forward toward the camera/screen.
-- The user is intentionally looking at the system to execute a smart home command.
-- REJECT IMMEDIATELY (is_valid_gesture=false) IF:
-  * The person is looking away (e.g., looking to the side, looking up at the ceiling, or looking at another person).
-  * The person is looking down at a smartphone, keyboard, desk, paper, or lap.
-  * The person is facing away or talking to someone else in the room with head turned.
-  * The person's eyes/face are not facing the camera.
-  * If person is NOT looking at camera: set is_valid_gesture=false, person_looking_at_camera=false, rejection_reason="Person Not Looking at Camera".
+- CRITICAL USER RULE:
+  * Direct eye pupil tracking or staring directly into the camera lens hole is NOT REQUIRED! Smart home and security cameras are often mounted high up on a wall or ceiling.
+  * AS LONG AS THE PERSON'S FACE IS VISIBLE IN FRONT OF THE CAMERA AND ORIENTED GENERALLY FORWARD, THAT IS FULLY VALID AND ENOUGH!
+- If the person's face is in front of the camera and facing forward toward the camera/room, set person_facing_camera=true.
+- ONLY reject (person_facing_camera=false) IF:
+  * The person has their back completely turned to the camera.
+  * The person's head is turned sideways (90+ degrees away) talking to someone behind or beside them.
+  * The person's head is tilted far down looking directly into their hands/lap.
+  * There is no person visible in front of the camera.
 
 FACTOR 2: HAND IS INTENTIONALLY PRESENTING A COMMAND GESTURE TO CAMERA
 - The hand highlighted in the yellow box is DELIBERATELY RAISED AND SHOWN TO THE CAMERA as an intentional smart home command.
 - The inside palm is facing forward toward the camera with 1, 2, 3, 4, or 5 fingers clearly and uprightly extended in the air.
-- Note: When a seated person raises their hand, in 2D perspective it appears in front of chest/shoulder/chin. If the palm is facing the camera in the air, THIS IS A VALID INTENTIONAL GESTURE.
-- REJECT IMMEDIATELY (is_valid_gesture=false) IF:
-  * Casual motion: Scratching head, rubbing eye/face, touching hair, or resting chin on hand.
+- If the user holds up their hand showing open fingers toward the camera, THIS IS AN INTENTIONAL COMMAND GESTURE! Set hand_intentionally_showing_gesture=true.
+- ONLY reject IF:
+  * Casual motion: Actively scratching head, rubbing eye/face, touching hair, or resting chin on hand.
   * Holding object: Hand is holding a phone, remote, mug, bottle, pen, or item.
   * Passive resting: Hand is resting flat on a desk, keyboard, armrest, or lap.
-  * Casual conversation: Gesturing with hands while talking to another person.
-  * If hand is not an intentional command: set is_valid_gesture=false, hand_intentionally_showing_gesture=false, rejection_reason="Unintentional Hand Movement / Casual Posture".
+  * Casual conversation: Gesturing with hands while talking to another person with head turned away.
 
 ========================================================================
 FINGER COUNTING ACCURACY (ZOOMED VIEW ON RIGHT):
@@ -276,7 +276,7 @@ Carefully inspect the ZOOMED HAND on the right and count the EXACT extended fing
 ========================================================================
 FINAL VERDICT & EXECUTION DECISION:
 ========================================================================
-- If FACTOR 1 (Looking at camera) IS TRUE AND FACTOR 2 (Intentional hand gesture) IS TRUE:
+- If FACTOR 1 (Face facing camera) IS TRUE AND FACTOR 2 (Intentional hand gesture) IS TRUE:
   --> is_valid_gesture = true, is_false_trigger = false
 - If EITHER factor is FALSE:
   --> is_valid_gesture = false, is_false_trigger = true
@@ -286,20 +286,20 @@ If valid (will execute):
 {
   "is_valid_gesture": true,
   "is_false_trigger": false,
-  "person_looking_at_camera": true,
+  "person_facing_camera": true,
   "hand_intentionally_showing_gesture": true,
   "gesture": "{gesture_name}",
   "verified_finger_count": {finger_count},
   "confidence": 0.98,
   "rejection_reason": "None",
-  "explanation": "Person is looking directly at camera and intentionally presenting a clear command gesture."
+  "explanation": "Person is in front of camera facing forward and intentionally presenting a clear command gesture."
 }
 
 If false trigger (will NOT execute):
 {
   "is_valid_gesture": false,
   "is_false_trigger": true,
-  "person_looking_at_camera": false,
+  "person_facing_camera": false,
   "hand_intentionally_showing_gesture": false,
   "gesture": "None",
   "verified_finger_count": 0,
@@ -404,12 +404,12 @@ class ChatGPTVerifier:
                 result = json.loads(content)
                 result["latency_ms"] = self.last_latency_ms
 
-                person_looking = result.get("person_looking_at_camera", True)
+                person_facing = result.get("person_facing_camera", result.get("person_looking_at_camera", True))
                 hand_intentional = result.get("hand_intentionally_showing_gesture", True)
                 is_valid = (
                     result.get("is_valid_gesture", False)
                     and not result.get("is_false_trigger", False)
-                    and person_looking
+                    and person_facing
                     and hand_intentional
                 )
                 self.latest_snapshot_status = "VERIFIED" if is_valid else "REVOKED"
@@ -1241,13 +1241,13 @@ class GestureProcessor:
             explanation = ai_res.get("explanation", "")
             latency = ai_res.get("latency_ms", 0.0)
 
-            person_looking = ai_res.get("person_looking_at_camera", True)
+            person_facing = ai_res.get("person_facing_camera", ai_res.get("person_looking_at_camera", True))
             hand_intentional = ai_res.get("hand_intentionally_showing_gesture", True)
 
             # ========================================================
             # DECISION: EXECUTE IF TRUE, DO NOT EXECUTE IF FALSE
             # ========================================================
-            if is_valid and not is_false and person_looking and hand_intentional:
+            if is_valid and not is_false and person_facing and hand_intentional:
                 # VERIFY FINGERS AS WELL WITH AI: Override candidate count if AI verified different finger count
                 ai_count = ai_res.get("verified_finger_count")
                 if ai_count is not None and isinstance(ai_count, int) and 0 <= ai_count <= 5:
