@@ -1,87 +1,87 @@
-# Gesture Control Add-on for Home Assistant v2.0
+# 🖐️ Gesture Control Add-on with ChatGPT AI Verification (v3.0)
 
-Control up to 5 smart devices using hand gestures via RTSP camera. Perfect for controlling lights, switches, fans, and other smart devices with simple hand gestures.
+Control smart home devices using hand gestures with **ChatGPT Vision AI (`gpt-4o-mini`) verification** to completely eliminate false triggers caused by:
+- 📱 **Talking on a mobile phone / holding phone to ear**
+- ☕ **Holding objects (coffee mug, cup, TV remote, pen, bottle)**
+- 👤 **Touching face, head, chin, ear, or scratching**
+- 🛋️ **Casual resting postures (chin in palm, arms folded)**
+- 🚶 **Long-distance noise or ambiguous hands in the background**
 
-## Features
+Based on the [DrasisAutomation Gesture-Control-Addon](https://github.com/DrasisAutomation/Gesture-Control-Addon.git) architecture, upgraded with a dual-stage **MediaPipe ➔ ChatGPT AI Verification & Revocation Pipeline**.
 
-- 🖐️ **5-Device Control** - Control up to 5 different entities with individual finger gestures
-- 🎯 **Accurate Gesture Detection** - Improved finger counting with confidence scoring
-- 📹 **Low Latency Streaming** - Direct RTSP stream passthrough with no re-encoding
-- 🔄 **Auto-Reconnection** - Automatically reconnects to both camera and Home Assistant
-- 🎮 **Reset Gesture** - Configurable gesture to turn off all devices at once
-- 📊 **Real-time Feedback** - Web UI with confidence meter and device status
-- ⚡ **High Performance** - Optimized processing with configurable FPS and stability frames
+---
 
-## Gesture Mapping
+## ⚡ How the False-Trigger Revocation Works
 
-| Gesture | Fingers | Action |
-|---------|---------|--------|
-| Fist | 0 | RESET: Turn OFF all configured devices |
-| 1 Finger | 1 | Toggle Device 1 (on/off) |
-| Victory | 2 | Toggle Device 2 (on/off) |
-| OK | 3 | Toggle Device 3 (on/off) |
-| 4 Fingers | 4 | Toggle Device 4 (on/off) |
-| Palm | 5 | Toggle Device 5 (on/off) |
+```
+      [Camera Frame] (Webcam or RTSP)
+             │
+             ▼
+      [MediaPipe 3D Hands]
+             │ (Hand detected)
+             ▼
+   [Candidate Stability Check] (4 consecutive frames)
+             │
+             ▼
+   [📸 Capture Context Snapshot]
+             │
+             ▼
+ 🤖 [Send Snapshot to ChatGPT Vision (gpt-4o-mini)]
+             │
+             ├── Is person holding a phone to their ear? ──> 🚫 REVOKE (Do not trigger)
+             ├── Is person holding a mug / object? ────────> 🚫 REVOKE (Do not trigger)
+             ├── Is person touching face / resting chin? ──> 🚫 REVOKE (Do not trigger)
+             └── Is it a deliberate, clear hand sign? ─────> ✅ TRIGGER Home Assistant!
+```
 
-**Note:** The reset gesture (fist) can be configured to any finger count (0-5) in settings.
+---
 
-## Configuration
+## 🎮 Gesture to Device Mapping
 
-### Basic Settings
+| Gesture | Finger Count | Default Entity | Action |
+|---|---|---|---|
+| **1 Finger** (Index up) | 1 | `light.pantry_light1` | Toggle Device 1 |
+| **2 Fingers** (Peace) | 2 | `light.pantry_light2` | Toggle Device 2 |
+| **3 Fingers** | 3 | `light.pantry_light3` | Toggle Device 3 |
+| **4 Fingers** | 4 | `light.pantry_light4` | Toggle Device 4 |
+| **5 Fingers** (Open Palm) | 5 | `light.pantry_light6` | Toggle Device 5 |
+| **Fist** | 0 | All Devices | Reset (Turn OFF All) |
 
-| Option | Description | Example |
-|--------|-------------|---------|
-| `rtsp_url` | RTSP camera URL | `rtsp://admin:password@192.168.1.100:554/stream` |
-| `ha_url` | Home Assistant WebSocket URL | `ws://homeassistant.local:8123/api/websocket` |
-| `ha_token` | Long-lived access token from Home Assistant | `eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...` |
+---
 
-### Device Entities (5 Configurable)
+## 🚀 How to Run
 
-| Option | Description | Example |
-|--------|-------------|---------|
-| `entity_1` | Entity controlled by 1 finger | `light.bedroom_light` |
-| `entity_2` | Entity controlled by 2 fingers | `light.living_room` |
-| `entity_3` | Entity controlled by 3 fingers | `switch.fan` |
-| `entity_4` | Entity controlled by 4 fingers | `light.kitchen` |
-| `entity_5` | Entity controlled by 5 fingers | `cover.garage_door` |
+### Option 1: Standalone / Windows PC (Instant Run)
+Double-click `run_addon.bat` or run in terminal:
 
-### Performance Settings
+```bash
+cd "c:\Camera Model\drasis_gesture_ai_addon"
+..\backend\.venv\Scripts\python.exe app.py
+```
 
-| Option | Description | Range | Default |
-|--------|-------------|-------|---------|
-| `fps` | Target processing FPS | 5-30 | 15 |
-| `frame_width` | Camera frame width | 320-1920 | 640 |
-| `frame_height` | Camera frame height | 240-1080 | 480 |
-| `bitrate` | Stream bitrate | any | 500k |
+Then open your browser at **`http://localhost:8099/`**.
 
-### Gesture Detection Settings
+### Option 2: Home Assistant OS Add-on
+Copy this folder into your Home Assistant `/addons/local/` directory and install it directly from the Home Assistant Add-on Store.
 
-| Option | Description | Range | Default |
-|--------|-------------|-------|---------|
-| `detection_confidence` | MediaPipe detection confidence | 0.3-0.9 | 0.5 |
-| `tracking_confidence` | MediaPipe tracking confidence | 0.3-0.9 | 0.5 |
-| `cooldown_seconds` | Cooldown between same gestures | 0-5 | 1 |
-| `reset_gesture` | Finger count that resets all devices | 0-5 | 0 |
-| `stability_frames` | Frames needed for gesture stabilization | 3-10 | 5 |
+---
 
-### Example Configuration
+## ⚙️ Configuration (`.env` or Add-on Options)
 
-```json
-{
-  "rtsp_url": "rtsp://admin:MyPassword@192.168.1.50:554/stream",
-  "ha_url": "ws://homeassistant.local:8123/api/websocket",
-  "ha_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
-  "entity_1": "light.bedroom_lamp",
-  "entity_2": "light.living_room_main",
-  "entity_3": "light.kitchen_strip",
-  "entity_4": "switch.garden_lights",
-  "entity_5": "fan.ceiling_fan",
-  "fps": 15,
-  "frame_width": 640,
-  "frame_height": 480,
-  "cooldown_seconds": 1,
-  "detection_confidence": 0.5,
-  "tracking_confidence": 0.5,
-  "reset_gesture": 0,
-  "stability_frames": 5
-}
+```env
+OPENAI_API_KEY=sk-proj-...
+OPENAI_MODEL=gpt-4o-mini
+AI_VERIFICATION_ENABLED=true
+
+HA_URL=https://demo.lumihomepro1.com/
+HA_TOKEN=eyJhbGciOi...
+
+CAMERA_SOURCE=0
+RTSP_URL=
+
+ENTITY_1=light.pantry_light1
+ENTITY_2=light.pantry_light2
+ENTITY_3=light.pantry_light3
+ENTITY_4=light.pantry_light4
+ENTITY_5=light.pantry_light6
+```

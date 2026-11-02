@@ -1,31 +1,26 @@
-FROM python:3.11-slim
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.11
+FROM ${BUILD_FROM}
 
-# Install minimal system dependencies for OpenCV headless and MediaPipe
-RUN apt-get update && apt-get install -y \
+ENV LANG C.UTF-8
+
+# Install system dependencies
+RUN apk add --no-cache \
     ffmpeg \
-    libgomp1 \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
+    libstdc++ \
+    mesa-gl \
+    linux-headers
 
-# Set working directory
 WORKDIR /app
 
-# Copy requirements first for better caching
+# Install Python requirements
 COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Copy application files
 COPY app.py .
+COPY web/ ./web/
 COPY run.sh .
-COPY web ./web
 
-# Make run script executable
-RUN chmod +x run.sh
+RUN chmod a+x run.sh
 
-# Expose port
-EXPOSE 8099
-
-# Run the application
-CMD ["./run.sh"]
+CMD [ "/app/run.sh" ]

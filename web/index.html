@@ -2,9 +2,26 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Gesture Control - Smart Home Integration</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gesture Control + ChatGPT AI Verification (Smart Home)</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --bg-dark: #07090e;
+            --card-bg: rgba(15, 23, 42, 0.75);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --primary: #3b82f6;
+            --primary-glow: rgba(59, 130, 246, 0.35);
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --purple: #a855f7;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -12,652 +29,866 @@
         }
 
         body {
-            background: #000;
-            overflow: hidden;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-
-        .container {
-            position: relative;
-            width: 100vw;
-            height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            background: #000;
-        }
-
-        video {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            transform: scaleX(-1);
-        }
-
-        /* Main gesture display */
-        .gesture-display {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            background: rgba(0, 0, 0, 0.85);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            padding: 15px 25px;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            min-height: 100vh;
             display: flex;
             flex-direction: column;
-            align-items: center;
-            gap: 10px;
-            z-index: 1000;
-            border: 2px solid rgba(255, 255, 255, 0.2);
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-            min-width: 200px;
-            pointer-events: none;
+            overflow-x: hidden;
         }
 
-        .current-gesture {
-            text-align: center;
-        }
-
-        .gesture-icon {
-            font-size: 72px;
-            filter: drop-shadow(0 2px 10px rgba(0,0,0,0.5));
-        }
-
-        .gesture-name {
-            font-size: 20px;
-            font-weight: bold;
-            color: #fff;
-            margin-top: 5px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-
-        .finger-count {
-            font-size: 14px;
-            color: #aaa;
-            margin-top: 5px;
-        }
-
-        .confidence-bar {
-            width: 100%;
-            height: 3px;
-            background: #333;
-            border-radius: 3px;
-            margin-top: 8px;
-            overflow: hidden;
-        }
-
-        .confidence-fill {
-            height: 100%;
-            background: #4caf50;
-            width: 0%;
-            transition: width 0.2s ease;
-        }
-
-        .last-action {
-            font-size: 12px;
-            color: #0f0;
-            margin-top: 5px;
-            font-family: monospace;
-        }
-
-        .divider {
-            width: 100%;
-            height: 1px;
-            background: rgba(255,255,255,0.2);
-            margin: 5px 0;
-        }
-
-        /* Entity status grid */
-        .entity-grid {
-            position: fixed;
-            bottom: 20px;
-            left: 20px;
-            background: rgba(0, 0, 0, 0.85);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            padding: 15px;
-            z-index: 1000;
-            border: 2px solid rgba(255, 255, 255, 0.2);
-            min-width: 280px;
-            pointer-events: none;
-        }
-
-        .entity-title {
-            font-size: 12px;
-            color: #aaa;
-            text-align: center;
-            margin-bottom: 10px;
-            letter-spacing: 1px;
-        }
-
-        .entity-items {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .entity-item {
+        /* Top Header */
+        header {
+            background: rgba(11, 15, 25, 0.9);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--card-border);
+            padding: 12px 24px;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 5px 10px;
-            background: rgba(255,255,255,0.05);
-            border-radius: 10px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
         }
 
-        .entity-icon {
-            font-size: 24px;
-            margin-right: 12px;
-        }
-
-        .entity-info {
-            flex: 1;
-        }
-
-        .entity-name {
-            font-size: 12px;
-            color: #fff;
-            font-weight: 500;
-        }
-
-        .entity-id {
-            font-size: 10px;
-            color: #888;
-            font-family: monospace;
-        }
-
-        .entity-status {
-            font-size: 20px;
-        }
-
-        .entity-status.on {
-            color: #4caf50;
-        }
-
-        .entity-status.off {
-            color: #f44336;
-        }
-
-        .gesture-guide {
+        .brand {
             display: flex;
-            gap: 15px;
-            margin-top: 5px;
-            flex-wrap: wrap;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-icon {
+            font-size: 26px;
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(168, 85, 247, 0.2));
+            border: 1px solid rgba(59, 130, 246, 0.4);
+            border-radius: 12px;
+            padding: 4px 10px;
+        }
+
+        .brand-titles h1 {
+            font-size: 16px;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+        }
+
+        .brand-titles p {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .header-badges {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .badge {
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .badge-ai {
+            background: rgba(168, 85, 247, 0.15);
+            border: 1px solid rgba(168, 85, 247, 0.4);
+            color: #c084fc;
+        }
+
+        .badge-ha {
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid rgba(16, 185, 129, 0.4);
+            color: #34d399;
+        }
+
+        .badge-ha.offline {
+            background: rgba(239, 68, 68, 0.15);
+            border-color: rgba(239, 68, 68, 0.4);
+            color: #f87171;
+        }
+
+        .btn-settings {
+            background: #1e293b;
+            color: var(--text-main);
+            border: 1px solid #334155;
+            padding: 7px 14px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-settings:hover {
+            background: #334155;
+        }
+
+        /* Main Container */
+        .main-layout {
+            display: grid;
+            grid-template-columns: 1.25fr 0.95fr;
+            gap: 20px;
+            padding: 20px 24px;
+            flex: 1;
+            max-width: 1600px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        @media (max-width: 1024px) {
+            .main-layout {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Left Column: Video & AI HUD */
+        .left-col {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .video-box {
+            position: relative;
+            background: #000;
+            border: 2px solid #1e293b;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            aspect-ratio: 4 / 3;
+            max-height: 520px;
+            display: flex;
+            align-items: center;
             justify-content: center;
         }
 
-        .guide-item {
-            text-align: center;
+        .video-box img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
         }
 
-        .guide-icon {
-            font-size: 28px;
-            filter: drop-shadow(0 2px 5px rgba(0,0,0,0.5));
+        /* AI Verification Card */
+        .ai-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 16px 20px;
+            backdrop-filter: blur(10px);
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            position: relative;
+            overflow: hidden;
         }
 
-        .guide-text {
-            font-size: 10px;
-            color: #ccc;
-            margin-top: 3px;
+        .ai-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #3b82f6, #a855f7, #10b981);
         }
 
-        .guide-entity {
-            font-size: 8px;
-            color: #4caf50;
-            margin-top: 2px;
+        .ai-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
         }
 
-        .status {
-            position: fixed;
-            top: 20px;
-            left: 20px;
-            background: rgba(0,0,0,0.7);
-            padding: 8px 15px;
-            border-radius: 20px;
-            color: #0f0;
-            font-family: monospace;
-            font-size: 12px;
-            z-index: 1000;
-            backdrop-filter: blur(5px);
-            pointer-events: none;
+        .ai-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 800;
+            color: #c084fc;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
 
-        .ha-status {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            background: rgba(0,0,0,0.7);
-            padding: 8px 15px;
-            border-radius: 20px;
-            color: #ffaa00;
-            font-family: monospace;
-            font-size: 12px;
-            z-index: 1000;
-            backdrop-filter: blur(5px);
-            pointer-events: none;
-        }
-
-        .fps-counter {
-            position: fixed;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0,0,0,0.5);
+        .ai-status-pill {
             padding: 4px 12px;
-            border-radius: 20px;
-            font-family: monospace;
-            font-size: 10px;
-            color: #888;
-            pointer-events: none;
-            z-index: 1000;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 800;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .ai-status-pill.idle {
+            background: rgba(148, 163, 184, 0.15);
+            color: #94a3b8;
+        }
+
+        .ai-status-pill.analyzing {
+            background: rgba(245, 158, 11, 0.2);
+            color: #fbbf24;
+            animation: pulse 1s infinite alternate;
+        }
+
+        .ai-status-pill.verified {
+            background: rgba(16, 185, 129, 0.25);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.6);
+        }
+
+        .ai-status-pill.revoked {
+            background: rgba(239, 68, 68, 0.25);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.6);
         }
 
         @keyframes pulse {
-            0% { opacity: 0.5; transform: scale(1); }
-            100% { opacity: 1; transform: scale(1.05); }
+            0% { opacity: 0.6; transform: scale(0.98); }
+            100% { opacity: 1; transform: scale(1.02); }
         }
 
-        .action-flash {
-            animation: pulse 0.3s ease-in-out 2;
+        .ai-body {
+            display: grid;
+            grid-template-columns: 120px 1fr;
+            gap: 16px;
+            align-items: center;
         }
 
-        @media (max-width: 768px) {
-            .gesture-display {
-                padding: 10px 15px;
-                min-width: 160px;
-                bottom: 10px;
-                right: 10px;
-            }
-            .gesture-icon {
-                font-size: 48px;
-            }
-            .gesture-name {
-                font-size: 14px;
-            }
-            .entity-grid {
-                min-width: 220px;
-                bottom: 10px;
-                left: 10px;
-                padding: 10px;
-            }
-            .entity-icon {
-                font-size: 20px;
-            }
-            .entity-name {
-                font-size: 10px;
-            }
-            .guide-icon {
-                font-size: 22px;
-            }
-            .status, .ha-status {
-                font-size: 10px;
-                padding: 5px 10px;
-            }
+        .snapshot-preview {
+            width: 120px;
+            height: 90px;
+            border-radius: 10px;
+            border: 1px solid #334155;
+            background: #000;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .snapshot-preview img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .ai-details {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .ai-verdict-title {
+            font-size: 14px;
+            font-weight: 700;
+        }
+
+        .ai-explanation {
+            font-size: 12px;
+            color: var(--text-muted);
+            line-height: 1.4;
+        }
+
+        .ai-meta {
+            display: flex;
+            gap: 16px;
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            color: #64748b;
+            margin-top: 4px;
+        }
+
+        /* Right Column: Devices & Audit Log */
+        .right-col {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .section-title {
+            font-size: 12px;
+            font-weight: 800;
+            color: var(--text-muted);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        /* Devices Grid */
+        .devices-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .device-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 14px;
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+
+        .device-card:hover {
+            background: rgba(30, 41, 59, 0.8);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .device-card.active {
+            border-color: var(--primary);
+            background: linear-gradient(90deg, rgba(59, 130, 246, 0.25), rgba(168, 85, 247, 0.2));
+            box-shadow: 0 0 15px var(--primary-glow);
+        }
+
+        .device-info {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .device-emoji {
+            font-size: 26px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 4px 8px;
+        }
+
+        .device-texts h3 {
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .device-texts p {
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-muted);
+        }
+
+        .state-switch {
+            width: 58px;
+            height: 28px;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 800;
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(255, 255, 255, 0.08);
+            color: #94a3b8;
+            transition: all 0.2s ease;
+        }
+
+        .state-switch.on {
+            background: rgba(16, 185, 129, 0.25);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.6);
+        }
+
+        /* Audit Log */
+        .log-box {
+            background: rgba(11, 15, 25, 0.95);
+            border: 1px solid var(--card-border);
+            border-radius: 14px;
+            padding: 12px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .log-entry {
+            padding: 6px 10px;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.03);
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            line-height: 1.4;
+        }
+
+        .log-entry.verified {
+            color: #34d399;
+            border-left: 3px solid #10b981;
+        }
+
+        .log-entry.revoked {
+            color: #f87171;
+            border-left: 3px solid #ef4444;
+        }
+
+        /* Settings Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(6px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal-content {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 16px;
+            width: 520px;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .form-group label {
+            font-size: 12px;
+            font-weight: 700;
+            color: #cbd5e1;
+        }
+
+        .form-group input {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 9px 12px;
+            color: #fff;
+            font-size: 13px;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .btn-save {
+            background: #2563eb;
+            color: #fff;
+            border: none;
+            padding: 9px 18px;
+            border-radius: 8px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .btn-cancel {
+            background: #334155;
+            color: #fff;
+            border: none;
+            padding: 9px 18px;
+            border-radius: 8px;
+            cursor: pointer;
         }
     </style>
-    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 </head>
 <body>
-    <div class="container">
-        <video id="video" autoplay playsinline muted></video>
+
+    <!-- Header -->
+    <header>
+        <div class="brand">
+            <div class="brand-icon">🖐️</div>
+            <div class="brand-titles">
+                <h1>Gesture Control + ChatGPT AI Verifier</h1>
+                <p>Zero False Triggers • Rejects Phone Calls, Object Holding & Face Touching</p>
+            </div>
+        </div>
+
+        <div class="header-badges">
+            <div class="badge badge-ai" id="badgeAi">🤖 ChatGPT: gpt-4o-mini</div>
+            <div class="badge badge-ha" id="badgeHa">🟢 HA: Connected</div>
+            <button class="btn-settings" onclick="openSettings()">⚙️ Settings</button>
+        </div>
+    </header>
+
+    <!-- Main Body -->
+    <div class="main-layout">
         
-        <div class="gesture-display">
-            <div class="current-gesture">
-                <div class="gesture-icon" id="gestureIcon">🤚</div>
-                <div class="gesture-name" id="gestureName">No Hand</div>
-                <div class="finger-count" id="fingerCount">Fingers: 0</div>
-                <div class="confidence-bar" id="confidenceBar">
-                    <div class="confidence-fill" id="confidenceFill"></div>
+        <!-- Left Column: Video & AI Card -->
+        <div class="left-col">
+            <div class="video-box">
+                <img id="videoStream" src="/video" alt="Real-time camera feed">
+            </div>
+
+            <!-- ChatGPT AI Verification Card -->
+            <div class="ai-card">
+                <div class="ai-header">
+                    <div class="ai-title">
+                        <span>🤖 ChatGPT Vision AI Verification</span>
+                    </div>
+                    <div class="ai-status-pill idle" id="aiStatusPill">IDLE</div>
                 </div>
-                <div class="last-action" id="lastAction">Last: --</div>
-            </div>
-            <div class="divider"></div>
-            <div class="gesture-guide" id="gestureGuide">
-                <!-- Dynamic gesture guide will be populated -->
+
+                <div class="ai-body">
+                    <div class="snapshot-preview">
+                        <img id="aiSnapshotImg" src="/snapshot/latest" alt="Latest AI Snapshot">
+                    </div>
+
+                    <div class="ai-details">
+                        <div class="ai-verdict-title" id="aiVerdictTitle">Waiting for hand gesture...</div>
+                        <div class="ai-explanation" id="aiExplanation">
+                            Hold a hand gesture for ~0.4s to trigger live ChatGPT verification. False actions (talking on phone, holding mugs, resting chin) are automatically revoked!
+                        </div>
+                        <div class="ai-meta">
+                            <span id="aiMetaLatency">Latency: -- ms</span>
+                            <span id="aiMetaGesture">Candidate: None</span>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
-        
-        <div class="entity-grid" id="entityGrid">
-            <div class="entity-title">🎮 CONTROLLED DEVICES</div>
-            <div class="entity-items" id="entityItems">
-                <!-- Dynamic entity status will be populated -->
+
+        <!-- Right Column: Devices & Log -->
+        <div class="right-col">
+            <div class="section-title">Smart Devices (Up to 5 Hand Gestures)</div>
+            
+            <div class="devices-list" id="devicesList">
+                <!-- Device 1 -->
+                <div class="device-card" id="card_1" onclick="toggleDevice(1)">
+                    <div class="device-info">
+                        <div class="device-emoji">☝️</div>
+                        <div class="device-texts">
+                            <h3 id="name_1">1 Finger -> Device 1</h3>
+                            <p id="entity_1">light.pantry_light1</p>
+                        </div>
+                    </div>
+                    <div class="state-switch" id="state_1">OFF</div>
+                </div>
+
+                <!-- Device 2 -->
+                <div class="device-card" id="card_2" onclick="toggleDevice(2)">
+                    <div class="device-info">
+                        <div class="device-emoji">✌️</div>
+                        <div class="device-texts">
+                            <h3 id="name_2">2 Fingers (Peace) -> Device 2</h3>
+                            <p id="entity_2">light.pantry_light2</p>
+                        </div>
+                    </div>
+                    <div class="state-switch" id="state_2">OFF</div>
+                </div>
+
+                <!-- Device 3 -->
+                <div class="device-card" id="card_3" onclick="toggleDevice(3)">
+                    <div class="device-info">
+                        <div class="device-emoji">👌</div>
+                        <div class="device-texts">
+                            <h3 id="name_3">3 Fingers -> Device 3</h3>
+                            <p id="entity_3">light.pantry_light3</p>
+                        </div>
+                    </div>
+                    <div class="state-switch" id="state_3">OFF</div>
+                </div>
+
+                <!-- Device 4 -->
+                <div class="device-card" id="card_4" onclick="toggleDevice(4)">
+                    <div class="device-info">
+                        <div class="device-emoji">🖖</div>
+                        <div class="device-texts">
+                            <h3 id="name_4">4 Fingers -> Device 4</h3>
+                            <p id="entity_4">light.pantry_light4</p>
+                        </div>
+                    </div>
+                    <div class="state-switch" id="state_4">OFF</div>
+                </div>
+
+                <!-- Device 5 -->
+                <div class="device-card" id="card_5" onclick="toggleDevice(5)">
+                    <div class="device-info">
+                        <div class="device-emoji">✋</div>
+                        <div class="device-texts">
+                            <h3 id="name_5">5 Fingers (Open Palm) -> Device 5</h3>
+                            <p id="entity_5">light.pantry_light6</p>
+                        </div>
+                    </div>
+                    <div class="state-switch" id="state_5">OFF</div>
+                </div>
+            </div>
+
+            <!-- Live Audit Log -->
+            <div class="section-title" style="margin-top: 10px;">Live Verification & Trigger Audit Log</div>
+            <div class="log-box" id="logBox">
+                <div class="log-entry">
+                    <span>System initialized. MediaPipe + ChatGPT Vision pipeline online.</span>
+                </div>
             </div>
         </div>
-        
-        <div class="status" id="status">Connecting...</div>
-        <div class="ha-status" id="haStatus">HA: Connecting...</div>
-        <div class="fps-counter" id="fpsCounter">FPS: --</div>
+
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal">
+        <div class="modal-content">
+            <h2 style="font-size: 16px; font-weight: 800;">Add-on Settings</h2>
+
+            <div class="form-group">
+                <label>OpenAI API Key:</label>
+                <input type="password" id="inputApiKey">
+            </div>
+
+            <div class="form-group">
+                <label>OpenAI Model:</label>
+                <input type="text" id="inputModel" value="gpt-4o-mini">
+            </div>
+
+            <div class="form-group">
+                <label>Camera RTSP URL (leave empty for webcam):</label>
+                <input type="text" id="inputRtsp" placeholder="rtsp://user:pass@ip:554/stream1">
+            </div>
+
+            <div class="form-group">
+                <label>Home Assistant URL:</label>
+                <input type="text" id="inputHaUrl">
+            </div>
+
+            <div class="form-group">
+                <label>Home Assistant Token:</label>
+                <input type="password" id="inputHaToken">
+            </div>
+
+            <div class="modal-actions">
+                <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
+                <button class="btn-save" onclick="saveSettings()">Save Settings</button>
+            </div>
+        </div>
     </div>
 
     <script>
-        // Socket.IO connection
-        const socket = io(window.location.origin, {
-            transports: ['websocket', 'polling'],
-            reconnection: true,
-            reconnectionAttempts: 10,
-            reconnectionDelay: 1000
-        });
-        
-        // DOM elements
-        const video = document.getElementById('video');
-        const gestureIconEl = document.getElementById('gestureIcon');
-        const gestureNameEl = document.getElementById('gestureName');
-        const fingerCountEl = document.getElementById('fingerCount');
-        const lastActionEl = document.getElementById('lastAction');
-        const statusEl = document.getElementById('status');
-        const haStatusEl = document.getElementById('haStatus');
-        const fpsCounterEl = document.getElementById('fpsCounter');
-        const confidenceFill = document.getElementById('confidenceFill');
-        const gestureGuide = document.getElementById('gestureGuide');
-        const entityItems = document.getElementById('entityItems');
-        
-        // Configuration
-        let entityConfig = {
-            entity_1: { name: "Device 1", id: "" },
-            entity_2: { name: "Device 2", id: "" },
-            entity_3: { name: "Device 3", id: "" },
-            entity_4: { name: "Device 4", id: "" },
-            entity_5: { name: "Device 5", id: "" }
-        };
-        
-        let entityStates = {1: false, 2: false, 3: false, 4: false, 5: false};
-        let resetGesture = 0;
-        
-        // Gesture mapping
-        const gestureMap = {
-            0: { icon: "✊", name: "Reset", action: "Reset all" },
-            1: { icon: "☝️", name: "1 Finger", action: "Toggle Device 1" },
-            2: { icon: "✌️", name: "2 Fingers", action: "Toggle Device 2" },
-            3: { icon: "👌", name: "3 Fingers", action: "Toggle Device 3" },
-            4: { icon: "🖖", name: "4 Fingers", action: "Toggle Device 4" },
-            5: { icon: "✋", name: "Palm", action: "Toggle Device 5" }
-        };
-        
-        // Set video source to backend stream
-        video.src = '/video?t=' + Date.now();
-        video.play().catch(e => console.log('Video autoplay blocked:', e));
-        
-        // Reload video on error
-        video.addEventListener('error', (e) => {
-            console.error('Video error:', e);
-            statusEl.textContent = '⚠️ Video stream error, reconnecting...';
-            statusEl.style.color = '#ffaa00';
-            setTimeout(() => {
-                video.src = '/video?t=' + Date.now();
-                video.play().catch(e => console.log('Retry failed:', e));
-            }, 3000);
-        });
-        
-        // Fetch configuration
-        async function fetchConfig() {
+        const socket = io(window.location.origin);
+
+        // Sound chime on verification
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playChime(success = true) {
             try {
-                const response = await fetch('/config');
-                const config = await response.json();
-                
-                // Update entity config
-                if (config.entities) {
-                    for (let i = 1; i <= 5; i++) {
-                        const entityKey = `entity_${i}`;
-                        const entityId = config.entities[entityKey];
-                        if (entityId) {
-                            const domain = entityId.split('.')[0];
-                            const name = entityId.split('.')[1] || `Device ${i}`;
-                            entityConfig[entityKey] = {
-                                name: name.replace(/_/g, ' ').toUpperCase(),
-                                id: entityId,
-                                domain: domain
-                            };
-                        } else {
-                            entityConfig[entityKey] = {
-                                name: `Device ${i}`,
-                                id: "",
-                                domain: "light"
-                            };
-                        }
-                    }
-                }
-                
-                resetGesture = config.reset_gesture || 0;
-                
-                // Update gesture map
-                gestureMap[resetGesture] = { ...gestureMap[resetGesture], name: "Reset", action: "Reset all" };
-                
-                // Update UI with config
-                updateGestureGuide();
-                updateEntityGrid();
-                
-                console.log('Config loaded:', entityConfig);
-            } catch (e) {
-                console.error('Failed to fetch config:', e);
-            }
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.frequency.value = success ? 587.33 : 220; // D5 for success, A3 for revoke
+                gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.3);
+            } catch (e) {}
         }
-        
-        function updateGestureGuide() {
-            const guides = [];
-            for (let i = 0; i <= 5; i++) {
-                if (i === resetGesture) {
-                    guides.push(`
-                        <div class="guide-item">
-                            <div class="guide-icon">${gestureMap[i]?.icon || '✊'}</div>
-                            <div class="guide-text">${gestureMap[i]?.name || 'Reset'}</div>
-                            <div class="guide-entity">Reset all</div>
-                        </div>
-                    `);
-                } else if (i >= 1 && i <= 5 && entityConfig[`entity_${i}`]?.id) {
-                    const shortName = entityConfig[`entity_${i}`].name.length > 10 ? 
-                        entityConfig[`entity_${i}`].name.substring(0, 10) + '...' : 
-                        entityConfig[`entity_${i}`].name;
-                    guides.push(`
-                        <div class="guide-item">
-                            <div class="guide-icon">${gestureMap[i]?.icon || '🖐️'}</div>
-                            <div class="guide-text">${gestureMap[i]?.name || i + ' Fingers'}</div>
-                            <div class="guide-entity">${shortName}</div>
-                        </div>
-                    `);
-                }
-            }
-            gestureGuide.innerHTML = guides.join('');
-        }
-        
-        function updateEntityGrid() {
-            const items = [];
-            for (let i = 1; i <= 5; i++) {
-                const entity = entityConfig[`entity_${i}`];
-                if (entity && entity.id) {
-                    const isOn = entityStates[i];
-                    items.push(`
-                        <div class="entity-item">
-                            <div class="entity-icon">${getEntityIcon(entity.domain)}</div>
-                            <div class="entity-info">
-                                <div class="entity-name">${entity.name}</div>
-                                <div class="entity-id">${entity.id}</div>
-                            </div>
-                            <div class="entity-status ${isOn ? 'on' : 'off'}">
-                                ${isOn ? '🔆' : '💡'}
-                            </div>
-                        </div>
-                    `);
-                }
-            }
-            if (items.length === 0) {
-                items.push(`
-                    <div class="entity-item">
-                        <div class="entity-info" style="text-align: center">
-                            <div class="entity-name">No devices configured</div>
-                            <div class="entity-id">Add entities in add-on config</div>
-                        </div>
-                    </div>
-                `);
-            }
-            entityItems.innerHTML = items.join('');
-        }
-        
-        function getEntityIcon(domain) {
-            const icons = {
-                'light': '💡',
-                'switch': '🔌',
-                'fan': '🌀',
-                'cover': '🚪',
-                'media_player': '📺',
-                'climate': '🌡️'
-            };
-            return icons[domain] || '🔧';
-        }
-        
-        // Socket event handlers
+
+        // Socket Events
         socket.on('connect', () => {
-            console.log('✅ Socket.IO connected');
-            statusEl.textContent = '✅ Connected';
-            statusEl.style.color = '#0f0';
-            fetchConfig();
-            socket.emit('get_entities');
+            console.log('Connected to Add-on backend');
+            addLogEntry('Connected to live backend stream.', true);
         });
-        
-        socket.on('disconnect', () => {
-            console.log('⚠️ Socket.IO disconnected');
-            statusEl.textContent = '⚠️ Disconnected, reconnecting...';
-            statusEl.style.color = '#ffaa00';
-        });
-        
-        socket.on('status', (data) => {
-            console.log('Status:', data);
-            if (data.haConnected !== undefined) {
-                haStatusEl.textContent = data.haConnected ? 'HA: Connected ✓' : 'HA: Disconnected ✗';
-                haStatusEl.style.color = data.haConnected ? '#0f0' : '#ffaa00';
+
+        socket.on('ai_status', (data) => {
+            const pill = document.getElementById('aiStatusPill');
+            if (data.status === 'COOLDOWN') {
+                pill.className = 'ai-status-pill';
+                pill.style.background = 'rgba(245, 158, 11, 0.15)';
+                pill.style.borderColor = 'rgba(245, 158, 11, 0.5)';
+                pill.style.color = '#fbbf24';
+                pill.textContent = '1.0s CAPTURE DELAY';
+                document.getElementById('aiVerdictTitle').textContent = '1.0s delay before next capture...';
+                document.getElementById('aiExplanation').textContent = 'Enforcing strict 1-second pause between captures to prevent accidental/rapid triggers.';
+                setTimeout(() => {
+                    pill.style.background = '';
+                    pill.style.borderColor = '';
+                    pill.style.color = '';
+                    pill.className = 'ai-status-pill';
+                    pill.textContent = 'AI: READY';
+                    document.getElementById('aiVerdictTitle').textContent = 'Waiting for hand gesture...';
+                    document.getElementById('aiExplanation').textContent = 'Hold a hand gesture for ~0.4s to trigger live ChatGPT verification. False actions are automatically revoked!';
+                }, (data.cooldown_seconds || 1.0) * 1000);
+                return;
             }
-            if (data.message) {
-                statusEl.textContent = data.message;
-            }
+            pill.style.background = '';
+            pill.style.borderColor = '';
+            pill.style.color = '';
+            pill.className = 'ai-status-pill analyzing';
+            pill.textContent = 'ANALYZING WITH CHATGPT...';
+            document.getElementById('aiVerdictTitle').textContent = `Analyzing ${data.gesture} (${data.fingers} fingers)...`;
+            document.getElementById('aiExplanation').textContent = 'Evaluating whether this is an intentional command or accidental everyday movement...';
+            document.getElementById('aiMetaGesture').textContent = `Candidate: ${data.gesture}`;
+            
+            // Highlight card
+            highlightCard(data.fingers);
         });
-        
-        socket.on('entity_config', (data) => {
-            if (data.entities) {
+
+        socket.on('pipeline_reset', (data) => {
+            const pill = document.getElementById('aiStatusPill');
+            pill.style.background = 'rgba(16, 185, 129, 0.2)';
+            pill.style.borderColor = 'rgba(16, 185, 129, 0.6)';
+            pill.style.color = '#34d399';
+            pill.className = 'ai-status-pill';
+            pill.textContent = 'AI: READY';
+            document.getElementById('aiVerdictTitle').textContent = `System Ready (${data.reason === 'FIST' ? '✊ Fist Reset' : '🖐️ Hand Rested'})`;
+            document.getElementById('aiExplanation').textContent = 'Gesture unlocked! You can now show your next hand gesture (1 to 5 fingers).';
+        });
+
+        socket.on('gesture_verified', (data) => {
+            playChime(true);
+            const pill = document.getElementById('aiStatusPill');
+            pill.style.background = 'rgba(245, 158, 11, 0.2)';
+            pill.style.borderColor = 'rgba(245, 158, 11, 0.6)';
+            pill.style.color = '#fbbf24';
+            pill.className = 'ai-status-pill';
+            pill.textContent = 'RESET REQUIRED';
+
+            document.getElementById('aiVerdictTitle').textContent = `✅ Confirmed: ${data.gesture} -> ${data.action}`;
+            document.getElementById('aiExplanation').textContent = 'Action executed! Now make a FIST [✊] or lower your hand to reset before showing your next gesture.';
+            document.getElementById('aiMetaLatency').textContent = `Latency: ${data.latency_ms} ms`;
+
+            // Refresh snapshot thumbnail
+            document.getElementById('aiSnapshotImg').src = `/snapshot/latest?t=${Date.now()}`;
+
+            // Log
+            const timeStr = new Date().toLocaleTimeString();
+            addLogEntry(`[${timeStr}] ✅ VERIFIED: ${data.gesture} -> ${data.action} (${data.latency_ms}ms) [Show Fist/Rest to reset]`, 'verified');
+
+            // Update states
+            if (data.entity_states) updateStates(data.entity_states);
+            setTimeout(clearHighlights, 1200);
+        });
+
+        socket.on('gesture_revoked', (data) => {
+            playChime(false);
+            const pill = document.getElementById('aiStatusPill');
+            pill.className = 'ai-status-pill revoked';
+            pill.textContent = 'FALSE TRIGGER REVOKED';
+
+            document.getElementById('aiVerdictTitle').textContent = `🚫 Revoked: False Gesture Blocked!`;
+            document.getElementById('aiExplanation').textContent = `Reason: ${data.rejection_reason} — ${data.explanation}`;
+            document.getElementById('aiMetaLatency').textContent = `Latency: ${data.latency_ms} ms`;
+
+            // Refresh snapshot thumbnail
+            document.getElementById('aiSnapshotImg').src = `/snapshot/latest?t=${Date.now()}`;
+
+            // Log
+            const timeStr = new Date().toLocaleTimeString();
+            addLogEntry(`[${timeStr}] 🚫 REVOKED: Blocked false trigger (${data.rejection_reason})`, 'revoked');
+            setTimeout(clearHighlights, 1200);
+        });
+
+        socket.on('entity_states', (data) => {
+            if (data.states) updateStates(data.states);
+        });
+
+        function updateStates(states) {
+            for (let i = 1; i <= 5; i++) {
+                const s = states[`entity_${i}`];
+                const el = document.getElementById(`state_${i}`);
+                if (el && s) {
+                    el.textContent = s.toUpperCase();
+                    el.className = s === 'on' ? 'state-switch on' : 'state-switch';
+                }
+            }
+        }
+
+        function highlightCard(num) {
+            clearHighlights();
+            const card = document.getElementById(`card_${num}`);
+            if (card) card.classList.add('active');
+        }
+
+        function clearHighlights() {
+            document.querySelectorAll('.device-card').forEach(c => c.classList.remove('active'));
+        }
+
+        function addLogEntry(text, type = 'normal') {
+            const box = document.getElementById('logBox');
+            const div = document.createElement('div');
+            div.className = `log-entry ${type}`;
+            div.textContent = text;
+            box.insertBefore(div, box.firstChild);
+        }
+
+        async function toggleDevice(num) {
+            try {
+                const res = await fetch('/api/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ entity_num: num })
+                });
+                const d = await res.json();
+                if (d.entity_states) updateStates(d.entity_states);
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        // Settings Modal
+        async function openSettings() {
+            try {
+                const res = await fetch('/config');
+                const cfg = await res.json();
+                document.getElementById('inputModel').value = cfg.openai_model || 'gpt-4o-mini';
+                document.getElementById('inputRtsp').value = cfg.rtsp_url || '';
+                document.getElementById('settingsModal').style.display = 'flex';
+            } catch (e) {
+                document.getElementById('settingsModal').style.display = 'flex';
+            }
+        }
+
+        function closeSettings() {
+            document.getElementById('settingsModal').style.display = 'none';
+        }
+
+        async function saveSettings() {
+            const payload = {
+                openai_model: document.getElementById('inputModel').value.trim(),
+                rtsp_url: document.getElementById('inputRtsp').value.trim()
+            };
+            const key = document.getElementById('inputApiKey').value.trim();
+            if (key) payload.openai_api_key = key;
+
+            const haUrl = document.getElementById('inputHaUrl').value.trim();
+            if (haUrl) payload.ha_url = haUrl;
+
+            const haToken = document.getElementById('inputHaToken').value.trim();
+            if (haToken) payload.ha_token = haToken;
+
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            closeSettings();
+        }
+
+        // Fetch initial config
+        fetch('/config').then(r => r.json()).then(cfg => {
+            if (cfg.entities) {
                 for (let i = 1; i <= 5; i++) {
-                    const entityKey = `entity_${i}`;
-                    if (data.entities[entityKey]) {
-                        const entityId = data.entities[entityKey];
-                        const domain = entityId.split('.')[0];
-                        const name = entityId.split('.')[1] || `Device ${i}`;
-                        entityConfig[entityKey] = {
-                            name: name.replace(/_/g, ' ').toUpperCase(),
-                            id: entityId,
-                            domain: domain
-                        };
+                    const eid = cfg.entities[`entity_${i}`];
+                    if (eid) {
+                        const el = document.getElementById(`entity_${i}`);
+                        if (el) el.textContent = eid;
                     }
                 }
-                updateGestureGuide();
-                updateEntityGrid();
             }
         });
-        
-        socket.on('entity_states', (data) => {
-            if (data.states) {
-                entityStates = data.states;
-                updateEntityGrid();
-            }
-        });
-        
-        socket.on('gesture', (data) => {
-            console.log('Gesture:', data);
-            
-            // Update UI with gesture info
-            gestureIconEl.textContent = data.gestureIcon || getIconForFingers(data.fingerCount);
-            gestureNameEl.textContent = data.gestureName || `${data.fingerCount} Fingers`;
-            fingerCountEl.textContent = `Fingers: ${data.fingerCount}`;
-            
-            // Update confidence bar
-            if (data.confidence) {
-                confidenceFill.style.width = `${data.confidence * 100}%`;
-                confidenceFill.style.backgroundColor = data.confidence > 0.7 ? '#4caf50' : '#ff9800';
-            }
-            
-            if (data.lastAction && data.lastAction !== '--') {
-                lastActionEl.textContent = `Last: ${data.lastAction}`;
-                lastActionEl.classList.add('action-flash');
-                setTimeout(() => {
-                    lastActionEl.classList.remove('action-flash');
-                }, 600);
-            }
-            
-            // Update HA status
-            if (data.haConnected !== undefined) {
-                haStatusEl.textContent = data.haConnected ? 'HA: Connected ✓' : 'HA: Disconnected ✗';
-                haStatusEl.style.color = data.haConnected ? '#0f0' : '#ffaa00';
-            }
-        });
-        
-        socket.on('gesture_update', (data) => {
-            // Update gesture display
-            gestureIconEl.textContent = data.gestureIcon || getIconForFingers(data.fingerCount);
-            gestureNameEl.textContent = data.gestureName || `${data.fingerCount} Fingers`;
-            fingerCountEl.textContent = `Fingers: ${data.fingerCount}`;
-            
-            if (data.lastAction && data.lastAction !== '--') {
-                lastActionEl.textContent = `Last: ${data.lastAction}`;
-            }
-            
-            if (data.haConnected !== undefined) {
-                haStatusEl.textContent = data.haConnected ? 'HA: Connected ✓' : 'HA: Disconnected ✗';
-                haStatusEl.style.color = data.haConnected ? '#0f0' : '#ffaa00';
-            }
-            
-            // Update entity states
-            if (data.entityStates) {
-                entityStates = data.entityStates;
-                updateEntityGrid();
-            }
-        });
-        
-        function getIconForFingers(count) {
-            const icons = {
-                0: '✊',
-                1: '☝️',
-                2: '✌️',
-                3: '👌',
-                4: '🖖',
-                5: '✋'
-            };
-            return icons[count] || '🖐️';
-        }
-        
-        // FPS counter from video element
-        let lastFpsTime = performance.now();
-        let fpsFrames = 0;
-        
-        function updateFPS() {
-            const now = performance.now();
-            fpsFrames++;
-            if (now - lastFpsTime >= 1000) {
-                const fps = Math.round(fpsFrames * 1000 / (now - lastFpsTime));
-                fpsCounterEl.textContent = `FPS: ${fps}`;
-                fpsFrames = 0;
-                lastFpsTime = now;
-            }
-            requestAnimationFrame(updateFPS);
-        }
-        
-        requestAnimationFrame(updateFPS);
-        
-        // Connection timeout fallback
-        setTimeout(() => {
-            if (!socket.connected) {
-                statusEl.textContent = '⚠️ Waiting for connection...';
-            }
-        }, 3000);
-        
-        // Handle page visibility
-        document.addEventListener('visibilitychange', () => {
-            if (!document.hidden && video.paused) {
-                video.play().catch(e => console.log('Play on visibility change:', e));
-            }
-        });
-        
-        // Initial fetch
-        fetchConfig();
     </script>
 </body>
 </html>

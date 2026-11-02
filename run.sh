@@ -1,5 +1,5 @@
-#!/usr/bin/env bash
-set -e
-
-# Start the gesture control application directly
+#!/usr/bin/with-contenv bashio
+echo "=========================================================="
+echo " Starting Gesture Control Add-on with ChatGPT AI Verification"
+echo "=========================================================="
 python3 /app/app.py
