@@ -620,7 +620,15 @@ class GestureProcessor:
         self.thread: Optional[threading.Thread] = None
         self.cap: Optional[cv2.VideoCapture] = None
 
-        self.mp_hands = mp.solutions.hands
+        try:
+            self.mp_hands = mp.solutions.hands
+        except AttributeError:
+            try:
+                import mediapipe.python.solutions.hands as mp_hands
+                self.mp_hands = mp_hands
+            except Exception as e:
+                logger.error(f"Failed to load mediapipe hands: {e}")
+                self.mp_hands = None
         self.hands = None
 
         # Stability buffer
