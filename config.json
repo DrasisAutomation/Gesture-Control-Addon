@@ -1,7 +1,7 @@
 {
-  "name": "Gesture Control with ChatGPT AI Verification",
+  "name": "Gesture Control",
   "version": "3.0.0",
-  "slug": "gesture_control_chatgpt_ai",
+  "slug": "gesture_control",
   "description": "Control smart home devices using hand gestures with ChatGPT Vision AI verification to completely eliminate false triggers (phone calls, holding objects, resting posture)",
   "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
   "startup": "application",
