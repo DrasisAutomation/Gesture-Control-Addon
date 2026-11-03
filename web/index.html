@@ -1053,21 +1053,22 @@
     </div>
 
     <script>
-        // Resolve base path dynamically so the UI works at "/", "/gesture", or HA Ingress "/api/hassio_ingress/<token>/"
-        let basePath = window.location.pathname.replace(/\/index\.html$/, '');
+        // Resolve base path dynamically so the UI works at "/", "////", "/gesture", or HA Ingress "/api/hassio_ingress/<token>/"
+        let basePath = window.location.pathname.replace(/\/index\.html$/, '').replace(/\/+/g, '/');
+        if (!basePath.startsWith('/')) basePath = '/' + basePath;
         if (!basePath.endsWith('/')) basePath += '/';
 
         function apiUrl(endpoint) {
             return basePath + endpoint.replace(/^\/+/, '');
         }
 
-        // Ensure stream and snapshot images use the resolved subpath even if URL had no trailing slash
+        // Ensure stream and snapshot images use the resolved subpath
         document.getElementById('videoStream').src = apiUrl('video');
         document.getElementById('aiSnapshotImg').src = apiUrl('snapshot/latest');
 
         const socket = io(window.location.origin, {
             path: basePath + 'socket.io',
-            transports: ['websocket', 'polling']
+            transports: ['polling', 'websocket']
         });
 
         // Subtle audio feedback

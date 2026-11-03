@@ -13,6 +13,7 @@ import logging
 import math
 import os
 from pathlib import Path
+import re
 import signal
 import sys
 import threading
@@ -1336,7 +1337,7 @@ class GestureServer:
     """aiohttp web application serving index UI, MJPEG video, snapshots, and REST endpoints."""
 
     def __init__(self):
-        self.app = aiohttp.web.Application()
+        self.app = aiohttp.web.Application(middlewares=[self._path_normalizer_middleware])
         self.sio = socketio.AsyncServer(cors_allowed_origins="*", async_mode="aiohttp")
         self.sio.attach(self.app)
 
@@ -1346,26 +1347,46 @@ class GestureServer:
         self._setup_routes()
         self._setup_sockets()
 
+    @aiohttp.web.middleware
+    async def _path_normalizer_middleware(self, request, handler):
+        try:
+            response = await handler(request)
+            if response.status != 404:
+                return response
+        except aiohttp.web.HTTPNotFound:
+            pass
+        return await self.catch_all_handler(request)
+
     def _setup_routes(self):
-        # Root routes + Subpath routes (e.g. /gesture, /gesture_control, /api/hassio_ingress/<token>)
-        prefixes = ["", "/{prefix}", "/api/hassio_ingress/{token}"]
-        for p in prefixes:
-            if p == "":
-                self.app.router.add_get("/", self.serve_index)
-            else:
-                self.app.router.add_get(p, self.serve_index)
-                self.app.router.add_get(f"{p}/", self.serve_index)
-                self.app.router.add_route("*", f"{p}/socket.io/", self.sio.handle_request)
-                self.app.router.add_route("*", f"{p}/socket.io", self.sio.handle_request)
-
-            self.app.router.add_get(f"{p}/video", self.video_stream)
-            self.app.router.add_get(f"{p}/snapshot/latest", self.get_latest_snapshot)
-            self.app.router.add_get(f"{p}/health", self.health_check)
-            self.app.router.add_get(f"{p}/config", self.get_config)
-            self.app.router.add_post(f"{p}/api/toggle", self.api_toggle)
-            self.app.router.add_post(f"{p}/api/settings", self.api_settings)
-
+        self.app.router.add_get("/", self.serve_index)
+        self.app.router.add_get("/video", self.video_stream)
+        self.app.router.add_get("/snapshot/latest", self.get_latest_snapshot)
+        self.app.router.add_get("/health", self.health_check)
+        self.app.router.add_get("/config", self.get_config)
+        self.app.router.add_post("/api/toggle", self.api_toggle)
+        self.app.router.add_post("/api/settings", self.api_settings)
         self.app.router.add_static("/static", str(BASE_DIR / "web"))
+        # Catch-all route for HA Ingress (e.g. GET ////, /api/hassio_ingress/<token>/..., or any custom /path)
+        self.app.router.add_route("*", "/{tail:.*}", self.catch_all_handler)
+
+    async def catch_all_handler(self, request):
+        """Route any HA Ingress multiple-slash or subpath requests cleanly without 404."""
+        clean_path = re.sub(r"/+", "/", request.path).rstrip("/")
+        if "/socket.io" in clean_path:
+            return await self.sio.handle_request(request)
+        if clean_path.endswith("/video"):
+            return await self.video_stream(request)
+        if clean_path.endswith("/snapshot/latest"):
+            return await self.get_latest_snapshot(request)
+        if clean_path.endswith("/health"):
+            return await self.health_check(request)
+        if clean_path.endswith("/config"):
+            return await self.get_config(request)
+        if clean_path.endswith("/api/toggle") and request.method == "POST":
+            return await self.api_toggle(request)
+        if clean_path.endswith("/api/settings") and request.method == "POST":
+            return await self.api_settings(request)
+        return await self.serve_index(request)
 
     def _setup_sockets(self):
         @self.sio.on("connect")
