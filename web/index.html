@@ -2,771 +2,1163 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gesture Control + ChatGPT AI Verification (Smart Home)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#ffffff">
+    <title>Drasis Gesture AI — Smart Home Control</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <style>
         :root {
-            --bg-dark: #07090e;
-            --card-bg: rgba(15, 23, 42, 0.75);
-            --card-border: rgba(255, 255, 255, 0.08);
-            --primary: #3b82f6;
-            --primary-glow: rgba(59, 130, 246, 0.35);
-            --success: #10b981;
-            --danger: #ef4444;
-            --warning: #f59e0b;
-            --purple: #a855f7;
-            --text-main: #f8fafc;
-            --text-muted: #94a3b8;
+            --bg-page: #f8fafc;
+            --bg-surface: #ffffff;
+            --bg-subtle: #f1f5f9;
+            --bg-muted: #f8fafc;
+            --border-subtle: #e2e8f0;
+            --border-focus: #cbd5e1;
+
+            --text-primary: #0f172a;
+            --text-secondary: #475569;
+            --text-muted: #64748b;
+            --text-faint: #94a3b8;
+
+            --accent: #2563eb;
+            --accent-soft: #eff6ff;
+            --accent-border: #bfdbfe;
+
+            --success: #059669;
+            --success-soft: #ecfdf5;
+            --success-border: #a7f3d0;
+
+            --warning: #d97706;
+            --warning-soft: #fffbeb;
+            --warning-border: #fde68a;
+
+            --danger: #dc2626;
+            --danger-soft: #fef2f2;
+            --danger-border: #fecaca;
+
+            --radius-sm: 8px;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+            --radius-full: 9999px;
+
+            --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
+            --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+            --shadow-md: 0 4px 12px -2px rgba(15, 23, 42, 0.06), 0 2px 6px -1px rgba(15, 23, 42, 0.04);
+            --shadow-lg: 0 12px 32px -4px rgba(15, 23, 42, 0.10);
         }
 
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
         }
 
         body {
-            background-color: var(--bg-dark);
-            color: var(--text-main);
-            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: var(--bg-page);
+            color: var(--text-primary);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             min-height: 100vh;
             display: flex;
             flex-direction: column;
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
             overflow-x: hidden;
         }
 
-        /* Top Header */
+        /* Top Navigation Header */
         header {
-            background: rgba(11, 15, 25, 0.9);
+            background: rgba(255, 255, 255, 0.88);
             backdrop-filter: blur(12px);
-            border-bottom: 1px solid var(--card-border);
-            padding: 12px 24px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
+            -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border-subtle);
             position: sticky;
             top: 0;
             z-index: 100;
+        }
+
+        .header-inner {
+            max-width: 1360px;
+            margin: 0 auto;
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
         }
 
         .brand {
             display: flex;
             align-items: center;
             gap: 12px;
+            min-width: 0;
         }
 
-        .brand-icon {
-            font-size: 26px;
-            background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(168, 85, 247, 0.2));
-            border: 1px solid rgba(59, 130, 246, 0.4);
-            border-radius: 12px;
-            padding: 4px 10px;
+        .brand-logo {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            background: var(--text-primary);
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            box-shadow: var(--shadow-xs);
+        }
+
+        .brand-logo svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        .brand-titles {
+            min-width: 0;
         }
 
         .brand-titles h1 {
-            font-size: 16px;
-            font-weight: 800;
-            letter-spacing: -0.02em;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: -0.015em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .brand-titles p {
-            font-size: 11px;
+            font-size: 12px;
             color: var(--text-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
-        .header-badges {
+        .header-actions {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 8px;
+            flex-shrink: 0;
         }
 
-        .badge {
-            padding: 6px 14px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 700;
-            display: flex;
+        .status-chip {
+            display: inline-flex;
             align-items: center;
             gap: 6px;
-            font-family: 'JetBrains Mono', monospace;
-        }
-
-        .badge-ai {
-            background: rgba(168, 85, 247, 0.15);
-            border: 1px solid rgba(168, 85, 247, 0.4);
-            color: #c084fc;
-        }
-
-        .badge-ha {
-            background: rgba(16, 185, 129, 0.15);
-            border: 1px solid rgba(16, 185, 129, 0.4);
-            color: #34d399;
-        }
-
-        .badge-ha.offline {
-            background: rgba(239, 68, 68, 0.15);
-            border-color: rgba(239, 68, 68, 0.4);
-            color: #f87171;
-        }
-
-        .btn-settings {
-            background: #1e293b;
-            color: var(--text-main);
-            border: 1px solid #334155;
-            padding: 7px 14px;
-            border-radius: 8px;
+            padding: 5px 11px;
+            border-radius: var(--radius-full);
             font-size: 12px;
-            font-weight: 700;
+            font-weight: 500;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-surface);
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+
+        .status-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--success);
+        }
+
+        .status-chip.ai-chip {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            background: var(--bg-subtle);
+            border-color: transparent;
+            color: var(--text-secondary);
+        }
+
+        .status-chip.ha-chip.online {
+            background: var(--success-soft);
+            border-color: var(--success-border);
+            color: var(--success);
+        }
+
+        .status-chip.ha-chip.online .status-dot {
+            background: var(--success);
+            box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.15);
+        }
+
+        .status-chip.ha-chip.offline {
+            background: var(--danger-soft);
+            border-color: var(--danger-border);
+            color: var(--danger);
+        }
+
+        .status-chip.ha-chip.offline .status-dot {
+            background: var(--danger);
+        }
+
+        .btn-icon {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--bg-surface);
+            color: var(--text-primary);
+            border: 1px solid var(--border-subtle);
+            padding: 6px 12px;
+            border-radius: var(--radius-sm);
+            font-size: 12.5px;
+            font-weight: 500;
+            font-family: inherit;
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: all 0.15s ease;
+            box-shadow: var(--shadow-xs);
         }
 
-        .btn-settings:hover {
-            background: #334155;
+        .btn-icon:hover {
+            background: var(--bg-subtle);
+            border-color: var(--border-focus);
         }
 
-        /* Main Container */
-        .main-layout {
-            display: grid;
-            grid-template-columns: 1.25fr 0.95fr;
-            gap: 20px;
-            padding: 20px 24px;
-            flex: 1;
-            max-width: 1600px;
-            margin: 0 auto;
+        .btn-icon svg {
+            width: 15px;
+            height: 15px;
+            color: var(--text-secondary);
+        }
+
+        /* Main Workspace Grid */
+        .workspace {
+            max-width: 1360px;
             width: 100%;
+            margin: 0 auto;
+            padding: 20px;
+            display: grid;
+            grid-template-columns: 1.15fr 0.85fr;
+            gap: 20px;
+            flex: 1;
+            align-items: start;
         }
 
-        @media (max-width: 1024px) {
-            .main-layout {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        /* Left Column: Video & AI HUD */
-        .left-col {
+        .col {
             display: flex;
             flex-direction: column;
             gap: 16px;
+            min-width: 0;
+        }
+
+        /* Surface Card */
+        .surface-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+        }
+
+        .card-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border-subtle);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .card-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
+        }
+
+        .card-title svg {
+            width: 16px;
+            height: 16px;
+            color: var(--text-muted);
+        }
+
+        .card-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 500;
+            padding: 3px 9px;
+            border-radius: var(--radius-full);
+            background: var(--bg-subtle);
+            color: var(--text-secondary);
+        }
+
+        /* Video Stream Box */
+        .video-wrapper {
+            padding: 10px;
+            background: var(--bg-surface);
         }
 
         .video-box {
             position: relative;
-            background: #000;
-            border: 2px solid #1e293b;
-            border-radius: 16px;
+            background: #0f172a;
+            border-radius: var(--radius-md);
             overflow: hidden;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
             aspect-ratio: 4 / 3;
-            max-height: 520px;
+            max-height: 480px;
+            width: 100%;
             display: flex;
             align-items: center;
             justify-content: center;
+            border: 1px solid var(--border-subtle);
         }
 
         .video-box img {
             width: 100%;
             height: 100%;
             object-fit: contain;
+            display: block;
         }
 
-        /* AI Verification Card */
-        .ai-card {
-            background: var(--card-bg);
-            border: 1px solid var(--card-border);
-            border-radius: 16px;
-            padding: 16px 20px;
-            backdrop-filter: blur(10px);
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .ai-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 3px;
-            background: linear-gradient(90deg, #3b82f6, #a855f7, #10b981);
-        }
-
-        .ai-header {
-            display: flex;
+        .live-indicator {
+            display: inline-flex;
             align-items: center;
-            justify-content: space-between;
-        }
-
-        .ai-title {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 13px;
-            font-weight: 800;
-            color: #c084fc;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        .ai-status-pill {
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 11px;
-            font-weight: 800;
+            gap: 6px;
             font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--success);
+            background: var(--success-soft);
+            border: 1px solid var(--success-border);
+            padding: 2px 8px;
+            border-radius: var(--radius-full);
+        }
+
+        .live-indicator::before {
+            content: '';
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--success);
+            animation: blink 2s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.35; }
+        }
+
+        /* AI Verification Inspector Card */
+        .ai-status-pill {
+            padding: 3px 10px;
+            border-radius: var(--radius-full);
+            font-size: 11px;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+            border: 1px solid transparent;
+            transition: all 0.2s ease;
         }
 
         .ai-status-pill.idle {
-            background: rgba(148, 163, 184, 0.15);
-            color: #94a3b8;
+            background: var(--bg-subtle);
+            color: var(--text-muted);
+            border-color: var(--border-subtle);
         }
 
-        .ai-status-pill.analyzing {
-            background: rgba(245, 158, 11, 0.2);
-            color: #fbbf24;
-            animation: pulse 1s infinite alternate;
+        .ai-status-pill.ready {
+            background: var(--success-soft);
+            color: var(--success);
+            border-color: var(--success-border);
+        }
+
+        .ai-status-pill.analyzing,
+        .ai-status-pill.cooldown {
+            background: var(--warning-soft);
+            color: var(--warning);
+            border-color: var(--warning-border);
         }
 
         .ai-status-pill.verified {
-            background: rgba(16, 185, 129, 0.25);
-            color: #34d399;
-            border: 1px solid rgba(16, 185, 129, 0.6);
+            background: var(--success-soft);
+            color: var(--success);
+            border-color: var(--success-border);
         }
 
         .ai-status-pill.revoked {
-            background: rgba(239, 68, 68, 0.25);
-            color: #f87171;
-            border: 1px solid rgba(239, 68, 68, 0.6);
-        }
-
-        @keyframes pulse {
-            0% { opacity: 0.6; transform: scale(0.98); }
-            100% { opacity: 1; transform: scale(1.02); }
+            background: var(--danger-soft);
+            color: var(--danger);
+            border-color: var(--danger-border);
         }
 
         .ai-body {
+            padding: 16px;
             display: grid;
-            grid-template-columns: 120px 1fr;
+            grid-template-columns: 128px 1fr;
             gap: 16px;
             align-items: center;
         }
 
         .snapshot-preview {
-            width: 120px;
-            height: 90px;
-            border-radius: 10px;
-            border: 1px solid #334155;
-            background: #000;
+            width: 128px;
+            height: 92px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-subtle);
             overflow: hidden;
             display: flex;
             align-items: center;
             justify-content: center;
+            flex-shrink: 0;
         }
 
         .snapshot-preview img {
             width: 100%;
             height: 100%;
             object-fit: cover;
+            display: block;
         }
 
         .ai-details {
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            gap: 6px;
+            min-width: 0;
         }
 
         .ai-verdict-title {
             font-size: 14px;
-            font-weight: 700;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
         }
 
         .ai-explanation {
-            font-size: 12px;
-            color: var(--text-muted);
-            line-height: 1.4;
+            font-size: 12.5px;
+            color: var(--text-secondary);
+            line-height: 1.45;
         }
 
         .ai-meta {
             display: flex;
-            gap: 16px;
-            font-size: 11px;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 2px;
+        }
+
+        .meta-tag {
             font-family: 'JetBrains Mono', monospace;
-            color: #64748b;
-            margin-top: 4px;
-        }
-
-        /* Right Column: Devices & Audit Log */
-        .right-col {
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-        }
-
-        .section-title {
-            font-size: 12px;
-            font-weight: 800;
+            font-size: 11px;
             color: var(--text-muted);
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
+            background: var(--bg-subtle);
+            padding: 2px 8px;
+            border-radius: 6px;
         }
 
-        /* Devices Grid */
+        /* Smart Devices List */
         .devices-list {
+            padding: 12px;
             display: flex;
             flex-direction: column;
-            gap: 10px;
+            gap: 8px;
         }
 
         .device-card {
-            background: var(--card-bg);
-            border: 1px solid var(--card-border);
-            border-radius: 14px;
-            padding: 12px 16px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 12px 14px;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            transition: all 0.2s ease;
+            gap: 12px;
+            transition: all 0.15s ease;
             cursor: pointer;
+            user-select: none;
         }
 
         .device-card:hover {
-            background: rgba(30, 41, 59, 0.8);
-            border-color: rgba(255, 255, 255, 0.15);
+            border-color: var(--border-focus);
+            background: var(--bg-muted);
+        }
+
+        .device-card:active {
+            transform: scale(0.995);
         }
 
         .device-card.active {
-            border-color: var(--primary);
-            background: linear-gradient(90deg, rgba(59, 130, 246, 0.25), rgba(168, 85, 247, 0.2));
-            box-shadow: 0 0 15px var(--primary-glow);
+            border-color: var(--accent);
+            background: var(--accent-soft);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.10);
         }
 
         .device-info {
             display: flex;
             align-items: center;
-            gap: 14px;
+            gap: 12px;
+            min-width: 0;
         }
 
-        .device-emoji {
-            font-size: 26px;
-            background: rgba(255, 255, 255, 0.05);
+        .gesture-badge {
+            width: 40px;
+            height: 40px;
             border-radius: 10px;
-            padding: 4px 8px;
+            background: var(--bg-subtle);
+            border: 1px solid var(--border-subtle);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            line-height: 1;
+            gap: 2px;
         }
 
-        .device-texts h3 {
-            font-size: 13px;
-            font-weight: 700;
+        .gesture-emoji {
+            font-size: 16px;
         }
 
-        .device-texts p {
-            font-size: 11px;
+        .gesture-num {
             font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+            font-weight: 600;
             color: var(--text-muted);
         }
 
-        .state-switch {
-            width: 58px;
-            height: 28px;
-            border-radius: 14px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 11px;
-            font-weight: 800;
+        .device-texts {
+            min-width: 0;
+        }
+
+        .device-texts h3 {
+            font-size: 13.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .device-texts p {
+            font-size: 11.5px;
             font-family: 'JetBrains Mono', monospace;
-            background: rgba(255, 255, 255, 0.08);
-            color: #94a3b8;
-            transition: all 0.2s ease;
+            color: var(--text-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .state-switch {
+            padding: 5px 12px;
+            min-width: 56px;
+            text-align: center;
+            border-radius: var(--radius-full);
+            font-size: 11px;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+            background: var(--bg-subtle);
+            color: var(--text-muted);
+            border: 1px solid var(--border-subtle);
+            transition: all 0.15s ease;
+            flex-shrink: 0;
         }
 
         .state-switch.on {
-            background: rgba(16, 185, 129, 0.25);
-            color: #34d399;
-            border: 1px solid rgba(16, 185, 129, 0.6);
+            background: var(--success-soft);
+            color: var(--success);
+            border-color: var(--success-border);
         }
 
         /* Audit Log */
         .log-box {
-            background: rgba(11, 15, 25, 0.95);
-            border: 1px solid var(--card-border);
-            border-radius: 14px;
             padding: 12px;
-            height: 200px;
+            height: 210px;
             overflow-y: auto;
             font-family: 'JetBrains Mono', monospace;
-            font-size: 11px;
+            font-size: 11.5px;
             display: flex;
             flex-direction: column;
             gap: 6px;
+            background: var(--bg-muted);
         }
 
         .log-entry {
-            padding: 6px 10px;
-            border-radius: 6px;
-            background: rgba(255, 255, 255, 0.03);
-            display: flex;
-            align-items: flex-start;
-            gap: 8px;
+            padding: 8px 10px;
+            border-radius: var(--radius-sm);
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
             line-height: 1.4;
+            word-break: break-word;
         }
 
         .log-entry.verified {
-            color: #34d399;
-            border-left: 3px solid #10b981;
+            background: var(--success-soft);
+            border-color: var(--success-border);
+            color: var(--success);
         }
 
         .log-entry.revoked {
-            color: #f87171;
-            border-left: 3px solid #ef4444;
+            background: var(--danger-soft);
+            border-color: var(--danger-border);
+            color: var(--danger);
+        }
+
+        .btn-clear-log {
+            background: transparent;
+            border: none;
+            font-size: 11.5px;
+            font-weight: 500;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 2px 6px;
+            border-radius: 6px;
+        }
+
+        .btn-clear-log:hover {
+            color: var(--text-primary);
+            background: var(--bg-subtle);
         }
 
         /* Settings Modal */
         .modal-overlay {
             position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.75);
-            backdrop-filter: blur(6px);
+            inset: 0;
+            background: rgba(15, 23, 42, 0.35);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
             display: none;
             align-items: center;
             justify-content: center;
             z-index: 1000;
+            padding: 16px;
         }
 
         .modal-content {
-            background: #0f172a;
-            border: 1px solid #334155;
-            border-radius: 16px;
-            width: 520px;
-            padding: 24px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            width: 100%;
+            max-width: 480px;
+            max-height: 90vh;
+            overflow-y: auto;
+            padding: 20px;
+            box-shadow: var(--shadow-lg);
             display: flex;
             flex-direction: column;
-            gap: 16px;
+            gap: 14px;
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .modal-header h2 {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .btn-close-modal {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 18px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 6px;
+        }
+
+        .btn-close-modal:hover {
+            background: var(--bg-subtle);
+            color: var(--text-primary);
         }
 
         .form-group {
             display: flex;
             flex-direction: column;
-            gap: 6px;
+            gap: 5px;
         }
 
         .form-group label {
             font-size: 12px;
-            font-weight: 700;
-            color: #cbd5e1;
+            font-weight: 500;
+            color: var(--text-secondary);
         }
 
         .form-group input {
-            background: #1e293b;
-            border: 1px solid #334155;
-            border-radius: 8px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
             padding: 9px 12px;
-            color: #fff;
+            color: var(--text-primary);
             font-size: 13px;
+            font-family: inherit;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
         }
 
         .form-group input:focus {
             outline: none;
-            border-color: var(--primary);
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
         }
 
         .modal-actions {
             display: flex;
             justify-content: flex-end;
-            gap: 10px;
-            margin-top: 10px;
+            gap: 8px;
+            margin-top: 6px;
+            padding-top: 12px;
+            border-top: 1px solid var(--border-subtle);
         }
 
-        .btn-save {
-            background: #2563eb;
-            color: #fff;
-            border: none;
-            padding: 9px 18px;
-            border-radius: 8px;
-            font-weight: 700;
+        .btn-primary {
+            background: var(--text-primary);
+            color: #ffffff;
+            border: 1px solid var(--text-primary);
+            padding: 8px 16px;
+            border-radius: var(--radius-sm);
+            font-size: 13px;
+            font-weight: 500;
+            font-family: inherit;
+            cursor: pointer;
+            transition: opacity 0.15s ease;
+        }
+
+        .btn-primary:hover {
+            opacity: 0.9;
+        }
+
+        .btn-secondary {
+            background: var(--bg-surface);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-subtle);
+            padding: 8px 16px;
+            border-radius: var(--radius-sm);
+            font-size: 13px;
+            font-weight: 500;
+            font-family: inherit;
             cursor: pointer;
         }
 
-        .btn-cancel {
-            background: #334155;
-            color: #fff;
-            border: none;
-            padding: 9px 18px;
-            border-radius: 8px;
-            cursor: pointer;
+        .btn-secondary:hover {
+            background: var(--bg-subtle);
+        }
+
+        /* Responsive Mobile & Tablet Breakpoints */
+        @media (max-width: 960px) {
+            .workspace {
+                grid-template-columns: 1fr;
+                padding: 14px;
+                gap: 14px;
+            }
+        }
+
+        @media (max-width: 600px) {
+            .header-inner {
+                padding: 10px 14px;
+            }
+
+            .brand-titles p {
+                display: none;
+            }
+
+            .status-chip.ai-chip {
+                display: none;
+            }
+
+            .btn-icon span {
+                display: none;
+            }
+
+            .btn-icon {
+                padding: 7px 9px;
+            }
+
+            .workspace {
+                padding: 10px;
+                gap: 12px;
+            }
+
+            .video-wrapper {
+                padding: 6px;
+            }
+
+            .ai-body {
+                grid-template-columns: 1fr;
+                gap: 12px;
+                padding: 14px;
+            }
+
+            .snapshot-preview {
+                width: 100%;
+                height: 150px;
+            }
+
+            .device-card {
+                padding: 11px 12px;
+            }
+
+            .modal-overlay {
+                align-items: flex-end;
+                padding: 0;
+            }
+
+            .modal-content {
+                border-bottom-left-radius: 0;
+                border-bottom-right-radius: 0;
+                max-width: 100%;
+                padding: 18px 16px 24px;
+            }
         }
     </style>
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 </head>
 <body>
 
-    <!-- Header -->
+    <!-- Minimal Header -->
     <header>
-        <div class="brand">
-            <div class="brand-icon">🖐️</div>
-            <div class="brand-titles">
-                <h1>Gesture Control + ChatGPT AI Verifier</h1>
-                <p>Zero False Triggers • Rejects Phone Calls, Object Holding & Face Touching</p>
+        <div class="header-inner">
+            <div class="brand">
+                <div class="brand-logo" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/>
+                        <path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"/>
+                        <path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"/>
+                        <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>
+                    </svg>
+                </div>
+                <div class="brand-titles">
+                    <h1>Drasis Gesture AI</h1>
+                    <p>Vision-Verified Smart Home Control</p>
+                </div>
             </div>
-        </div>
 
-        <div class="header-badges">
-            <div class="badge badge-ai" id="badgeAi">🤖 ChatGPT: gpt-4o-mini</div>
-            <div class="badge badge-ha" id="badgeHa">🟢 HA: Connected</div>
-            <button class="btn-settings" onclick="openSettings()">⚙️ Settings</button>
+            <div class="header-actions">
+                <div class="status-chip ai-chip" id="badgeAi">gpt-4o-mini</div>
+                <div class="status-chip ha-chip online" id="badgeHa">
+                    <span class="status-dot"></span>
+                    <span id="badgeHaText">HA Connected</span>
+                </div>
+                <button class="btn-icon" onclick="openSettings()" title="Settings">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                    <span>Settings</span>
+                </button>
+            </div>
         </div>
     </header>
 
-    <!-- Main Body -->
-    <div class="main-layout">
-        
-        <!-- Left Column: Video & AI Card -->
-        <div class="left-col">
-            <div class="video-box">
-                <img id="videoStream" src="/video" alt="Real-time camera feed">
-            </div>
+    <!-- Main Workspace -->
+    <main class="workspace">
 
-            <!-- ChatGPT AI Verification Card -->
-            <div class="ai-card">
-                <div class="ai-header">
-                    <div class="ai-title">
-                        <span>🤖 ChatGPT Vision AI Verification</span>
+        <!-- Left Column: Camera Feed & Vision Verification -->
+        <div class="col">
+            <section class="surface-card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M23 7l-7 5 7 5V7z"></path>
+                            <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+                        </svg>
+                        <span>Camera Stream</span>
+                    </div>
+                    <span class="live-indicator">LIVE</span>
+                </div>
+                <div class="video-wrapper">
+                    <div class="video-box">
+                        <img id="videoStream" src="video" alt="Real-time camera feed">
+                    </div>
+                </div>
+            </section>
+
+            <!-- AI Verification Card -->
+            <section class="surface-card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                        </svg>
+                        <span>AI Vision Verification</span>
                     </div>
                     <div class="ai-status-pill idle" id="aiStatusPill">IDLE</div>
                 </div>
 
                 <div class="ai-body">
                     <div class="snapshot-preview">
-                        <img id="aiSnapshotImg" src="/snapshot/latest" alt="Latest AI Snapshot">
+                        <img id="aiSnapshotImg" src="snapshot/latest" alt="Latest AI Snapshot">
                     </div>
 
                     <div class="ai-details">
                         <div class="ai-verdict-title" id="aiVerdictTitle">Waiting for hand gesture...</div>
                         <div class="ai-explanation" id="aiExplanation">
-                            Hold a hand gesture for ~0.4s to trigger live ChatGPT verification. False actions (talking on phone, holding mugs, resting chin) are automatically revoked!
+                            Hold 1 to 5 fingers steadily for ~0.4s to trigger verification. Accidental motions are automatically filtered out.
                         </div>
                         <div class="ai-meta">
-                            <span id="aiMetaLatency">Latency: -- ms</span>
-                            <span id="aiMetaGesture">Candidate: None</span>
+                            <span class="meta-tag" id="aiMetaLatency">Latency: -- ms</span>
+                            <span class="meta-tag" id="aiMetaGesture">Candidate: None</span>
                         </div>
                     </div>
                 </div>
-            </div>
+            </section>
         </div>
 
-        <!-- Right Column: Devices & Log -->
-        <div class="right-col">
-            <div class="section-title">Smart Devices (Up to 5 Hand Gestures)</div>
-            
-            <div class="devices-list" id="devicesList">
-                <!-- Device 1 -->
-                <div class="device-card" id="card_1" onclick="toggleDevice(1)">
-                    <div class="device-info">
-                        <div class="device-emoji">☝️</div>
-                        <div class="device-texts">
-                            <h3 id="name_1">1 Finger -> Device 1</h3>
-                            <p id="entity_1">light.pantry_light1</p>
-                        </div>
+        <!-- Right Column: Devices & Activity Log -->
+        <div class="col">
+            <section class="surface-card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect>
+                            <polyline points="17 2 12 7 7 2"></polyline>
+                        </svg>
+                        <span>Gesture Devices</span>
                     </div>
-                    <div class="state-switch" id="state_1">OFF</div>
+                    <span class="card-badge" id="activeCountBadge">1–5 Fingers</span>
                 </div>
 
-                <!-- Device 2 -->
-                <div class="device-card" id="card_2" onclick="toggleDevice(2)">
-                    <div class="device-info">
-                        <div class="device-emoji">✌️</div>
-                        <div class="device-texts">
-                            <h3 id="name_2">2 Fingers (Peace) -> Device 2</h3>
-                            <p id="entity_2">light.pantry_light2</p>
+                <div class="devices-list" id="devicesList">
+                    <!-- Device 1 -->
+                    <div class="device-card" id="card_1" onclick="toggleDevice(1)">
+                        <div class="device-info">
+                            <div class="gesture-badge">
+                                <span class="gesture-emoji">☝️</span>
+                                <span class="gesture-num">1F</span>
+                            </div>
+                            <div class="device-texts">
+                                <h3 id="name_1">1 Finger · Device 1</h3>
+                                <p id="entity_1">light.pantry_light1</p>
+                            </div>
                         </div>
+                        <div class="state-switch" id="state_1">OFF</div>
                     </div>
-                    <div class="state-switch" id="state_2">OFF</div>
-                </div>
 
-                <!-- Device 3 -->
-                <div class="device-card" id="card_3" onclick="toggleDevice(3)">
-                    <div class="device-info">
-                        <div class="device-emoji">👌</div>
-                        <div class="device-texts">
-                            <h3 id="name_3">3 Fingers -> Device 3</h3>
-                            <p id="entity_3">light.pantry_light3</p>
+                    <!-- Device 2 -->
+                    <div class="device-card" id="card_2" onclick="toggleDevice(2)">
+                        <div class="device-info">
+                            <div class="gesture-badge">
+                                <span class="gesture-emoji">✌️</span>
+                                <span class="gesture-num">2F</span>
+                            </div>
+                            <div class="device-texts">
+                                <h3 id="name_2">2 Fingers · Device 2</h3>
+                                <p id="entity_2">light.pantry_light2</p>
+                            </div>
                         </div>
+                        <div class="state-switch" id="state_2">OFF</div>
                     </div>
-                    <div class="state-switch" id="state_3">OFF</div>
-                </div>
 
-                <!-- Device 4 -->
-                <div class="device-card" id="card_4" onclick="toggleDevice(4)">
-                    <div class="device-info">
-                        <div class="device-emoji">🖖</div>
-                        <div class="device-texts">
-                            <h3 id="name_4">4 Fingers -> Device 4</h3>
-                            <p id="entity_4">light.pantry_light4</p>
+                    <!-- Device 3 -->
+                    <div class="device-card" id="card_3" onclick="toggleDevice(3)">
+                        <div class="device-info">
+                            <div class="gesture-badge">
+                                <span class="gesture-emoji">👌</span>
+                                <span class="gesture-num">3F</span>
+                            </div>
+                            <div class="device-texts">
+                                <h3 id="name_3">3 Fingers · Device 3</h3>
+                                <p id="entity_3">light.pantry_light3</p>
+                            </div>
                         </div>
+                        <div class="state-switch" id="state_3">OFF</div>
                     </div>
-                    <div class="state-switch" id="state_4">OFF</div>
-                </div>
 
-                <!-- Device 5 -->
-                <div class="device-card" id="card_5" onclick="toggleDevice(5)">
-                    <div class="device-info">
-                        <div class="device-emoji">✋</div>
-                        <div class="device-texts">
-                            <h3 id="name_5">5 Fingers (Open Palm) -> Device 5</h3>
-                            <p id="entity_5">light.pantry_light6</p>
+                    <!-- Device 4 -->
+                    <div class="device-card" id="card_4" onclick="toggleDevice(4)">
+                        <div class="device-info">
+                            <div class="gesture-badge">
+                                <span class="gesture-emoji">🖖</span>
+                                <span class="gesture-num">4F</span>
+                            </div>
+                            <div class="device-texts">
+                                <h3 id="name_4">4 Fingers · Device 4</h3>
+                                <p id="entity_4">light.pantry_light4</p>
+                            </div>
                         </div>
+                        <div class="state-switch" id="state_4">OFF</div>
                     </div>
-                    <div class="state-switch" id="state_5">OFF</div>
+
+                    <!-- Device 5 -->
+                    <div class="device-card" id="card_5" onclick="toggleDevice(5)">
+                        <div class="device-info">
+                            <div class="gesture-badge">
+                                <span class="gesture-emoji">✋</span>
+                                <span class="gesture-num">5F</span>
+                            </div>
+                            <div class="device-texts">
+                                <h3 id="name_5">5 Fingers · Device 5</h3>
+                                <p id="entity_5">light.pantry_light6</p>
+                            </div>
+                        </div>
+                        <div class="state-switch" id="state_5">OFF</div>
+                    </div>
                 </div>
-            </div>
+            </section>
 
             <!-- Live Audit Log -->
-            <div class="section-title" style="margin-top: 10px;">Live Verification & Trigger Audit Log</div>
-            <div class="log-box" id="logBox">
-                <div class="log-entry">
-                    <span>System initialized. MediaPipe + ChatGPT Vision pipeline online.</span>
+            <section class="surface-card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                        </svg>
+                        <span>Activity Log</span>
+                    </div>
+                    <button class="btn-clear-log" onclick="clearLogs()">Clear</button>
                 </div>
-            </div>
+                <div class="log-box" id="logBox">
+                    <div class="log-entry">
+                        <span>System initialized. Vision pipeline ready.</span>
+                    </div>
+                </div>
+            </section>
         </div>
 
-    </div>
+    </main>
 
     <!-- Settings Modal -->
-    <div class="modal-overlay" id="settingsModal">
+    <div class="modal-overlay" id="settingsModal" onclick="handleOverlayClick(event)">
         <div class="modal-content">
-            <h2 style="font-size: 16px; font-weight: 800;">Add-on Settings</h2>
-
-            <div class="form-group">
-                <label>OpenAI API Key:</label>
-                <input type="password" id="inputApiKey">
+            <div class="modal-header">
+                <h2>Configuration</h2>
+                <button class="btn-close-modal" onclick="closeSettings()" aria-label="Close">&times;</button>
             </div>
 
             <div class="form-group">
-                <label>OpenAI Model:</label>
+                <label for="inputApiKey">OpenAI API Key</label>
+                <input type="password" id="inputApiKey" placeholder="sk-...">
+            </div>
+
+            <div class="form-group">
+                <label for="inputModel">OpenAI Vision Model</label>
                 <input type="text" id="inputModel" value="gpt-4o-mini">
             </div>
 
             <div class="form-group">
-                <label>Camera RTSP URL (leave empty for webcam):</label>
+                <label for="inputRtsp">Camera RTSP URL (leave empty for local webcam)</label>
                 <input type="text" id="inputRtsp" placeholder="rtsp://user:pass@ip:554/stream1">
             </div>
 
             <div class="form-group">
-                <label>Home Assistant URL:</label>
-                <input type="text" id="inputHaUrl">
+                <label for="inputHaUrl">Home Assistant URL</label>
+                <input type="text" id="inputHaUrl" placeholder="http://homeassistant.local:8123">
             </div>
 
             <div class="form-group">
-                <label>Home Assistant Token:</label>
-                <input type="password" id="inputHaToken">
+                <label for="inputHaToken">Home Assistant Long-Lived Token</label>
+                <input type="password" id="inputHaToken" placeholder="Paste token to update">
             </div>
 
             <div class="modal-actions">
-                <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
-                <button class="btn-save" onclick="saveSettings()">Save Settings</button>
+                <button class="btn-secondary" onclick="closeSettings()">Cancel</button>
+                <button class="btn-primary" onclick="saveSettings()">Save Changes</button>
             </div>
         </div>
     </div>
 
     <script>
-        const socket = io(window.location.origin);
+        // Resolve base path dynamically so the UI works at "/", "/gesture", or HA Ingress "/api/hassio_ingress/<token>/"
+        let basePath = window.location.pathname.replace(/\/index\.html$/, '');
+        if (!basePath.endsWith('/')) basePath += '/';
 
-        // Sound chime on verification
+        function apiUrl(endpoint) {
+            return basePath + endpoint.replace(/^\/+/, '');
+        }
+
+        // Ensure stream and snapshot images use the resolved subpath even if URL had no trailing slash
+        document.getElementById('videoStream').src = apiUrl('video');
+        document.getElementById('aiSnapshotImg').src = apiUrl('snapshot/latest');
+
+        const socket = io(window.location.origin, {
+            path: basePath + 'socket.io',
+            transports: ['websocket', 'polling']
+        });
+
+        // Subtle audio feedback
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         function playChime(success = true) {
             try {
+                if (audioCtx.state === 'suspended') audioCtx.resume();
                 const osc = audioCtx.createOscillator();
                 const gain = audioCtx.createGain();
                 osc.connect(gain);
                 gain.connect(audioCtx.destination);
-                osc.frequency.value = success ? 587.33 : 220; // D5 for success, A3 for revoke
-                gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                osc.frequency.value = success ? 587.33 : 220;
+                gain.gain.setValueAtTime(0.10, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.25);
                 osc.start();
-                osc.stop(audioCtx.currentTime + 0.3);
+                osc.stop(audioCtx.currentTime + 0.25);
             } catch (e) {}
         }
 
-        // Socket Events
+        function setHaBadge(connected) {
+            const badge = document.getElementById('badgeHa');
+            const text = document.getElementById('badgeHaText');
+            if (connected) {
+                badge.className = 'status-chip ha-chip online';
+                text.textContent = 'HA Connected';
+            } else {
+                badge.className = 'status-chip ha-chip offline';
+                text.textContent = 'HA Offline';
+            }
+        }
+
         socket.on('connect', () => {
-            console.log('Connected to Add-on backend');
-            addLogEntry('Connected to live backend stream.', true);
+            addLogEntry('Connected to live stream.', 'normal');
+        });
+
+        socket.on('status', (data) => {
+            if (typeof data.haConnected === 'boolean') {
+                setHaBadge(data.haConnected);
+            }
+            if (data.entityStates) {
+                updateStates(data.entityStates);
+            }
         });
 
         socket.on('ai_status', (data) => {
             const pill = document.getElementById('aiStatusPill');
             if (data.status === 'COOLDOWN') {
-                pill.className = 'ai-status-pill';
-                pill.style.background = 'rgba(245, 158, 11, 0.15)';
-                pill.style.borderColor = 'rgba(245, 158, 11, 0.5)';
-                pill.style.color = '#fbbf24';
-                pill.textContent = '1.0s CAPTURE DELAY';
-                document.getElementById('aiVerdictTitle').textContent = '1.0s delay before next capture...';
-                document.getElementById('aiExplanation').textContent = 'Enforcing strict 1-second pause between captures to prevent accidental/rapid triggers.';
+                pill.className = 'ai-status-pill cooldown';
+                pill.textContent = '1.0s DELAY';
+                document.getElementById('aiVerdictTitle').textContent = 'Pause before next capture...';
+                document.getElementById('aiExplanation').textContent = 'Brief cooldown active to prevent rapid accidental triggers.';
                 setTimeout(() => {
-                    pill.style.background = '';
-                    pill.style.borderColor = '';
-                    pill.style.color = '';
-                    pill.className = 'ai-status-pill';
-                    pill.textContent = 'AI: READY';
+                    pill.className = 'ai-status-pill ready';
+                    pill.textContent = 'READY';
                     document.getElementById('aiVerdictTitle').textContent = 'Waiting for hand gesture...';
-                    document.getElementById('aiExplanation').textContent = 'Hold a hand gesture for ~0.4s to trigger live ChatGPT verification. False actions are automatically revoked!';
+                    document.getElementById('aiExplanation').textContent = 'Hold 1 to 5 fingers steadily for ~0.4s to trigger verification.';
                 }, (data.cooldown_seconds || 1.0) * 1000);
                 return;
             }
-            pill.style.background = '';
-            pill.style.borderColor = '';
-            pill.style.color = '';
             pill.className = 'ai-status-pill analyzing';
-            pill.textContent = 'ANALYZING WITH CHATGPT...';
-            document.getElementById('aiVerdictTitle').textContent = `Analyzing ${data.gesture} (${data.fingers} fingers)...`;
-            document.getElementById('aiExplanation').textContent = 'Evaluating whether this is an intentional command or accidental everyday movement...';
+            pill.textContent = 'ANALYZING';
+            document.getElementById('aiVerdictTitle').textContent = `Verifying ${data.gesture} (${data.fingers} fingers)...`;
+            document.getElementById('aiExplanation').textContent = 'Checking whether this is an intentional command gesture...';
             document.getElementById('aiMetaGesture').textContent = `Candidate: ${data.gesture}`;
-            
-            // Highlight card
+
             highlightCard(data.fingers);
         });
 
         socket.on('pipeline_reset', (data) => {
             const pill = document.getElementById('aiStatusPill');
-            pill.style.background = 'rgba(16, 185, 129, 0.2)';
-            pill.style.borderColor = 'rgba(16, 185, 129, 0.6)';
-            pill.style.color = '#34d399';
-            pill.className = 'ai-status-pill';
-            pill.textContent = 'AI: READY';
-            document.getElementById('aiVerdictTitle').textContent = `System Ready (${data.reason === 'FIST' ? '✊ Fist Reset' : '🖐️ Hand Rested'})`;
-            document.getElementById('aiExplanation').textContent = 'Gesture unlocked! You can now show your next hand gesture (1 to 5 fingers).';
+            pill.className = 'ai-status-pill ready';
+            pill.textContent = 'READY';
+            document.getElementById('aiVerdictTitle').textContent = `System Ready (${data.reason === 'FIST' ? 'Fist Reset' : 'Hand Rested'})`;
+            document.getElementById('aiExplanation').textContent = 'Unlocked. Show your next hand gesture (1 to 5 fingers).';
         });
 
         socket.on('gesture_verified', (data) => {
             playChime(true);
             const pill = document.getElementById('aiStatusPill');
-            pill.style.background = 'rgba(245, 158, 11, 0.2)';
-            pill.style.borderColor = 'rgba(245, 158, 11, 0.6)';
-            pill.style.color = '#fbbf24';
-            pill.className = 'ai-status-pill';
+            pill.className = 'ai-status-pill verified';
             pill.textContent = 'RESET REQUIRED';
 
-            document.getElementById('aiVerdictTitle').textContent = `✅ Confirmed: ${data.gesture} -> ${data.action}`;
-            document.getElementById('aiExplanation').textContent = 'Action executed! Now make a FIST [✊] or lower your hand to reset before showing your next gesture.';
+            document.getElementById('aiVerdictTitle').textContent = `Confirmed: ${data.gesture} → ${data.action}`;
+            document.getElementById('aiExplanation').textContent = 'Command executed. Make a fist or lower your hand to reset for the next gesture.';
             document.getElementById('aiMetaLatency').textContent = `Latency: ${data.latency_ms} ms`;
 
-            // Refresh snapshot thumbnail
-            document.getElementById('aiSnapshotImg').src = `/snapshot/latest?t=${Date.now()}`;
+            document.getElementById('aiSnapshotImg').src = apiUrl(`snapshot/latest?t=${Date.now()}`);
 
-            // Log
-            const timeStr = new Date().toLocaleTimeString();
-            addLogEntry(`[${timeStr}] ✅ VERIFIED: ${data.gesture} -> ${data.action} (${data.latency_ms}ms) [Show Fist/Rest to reset]`, 'verified');
+            const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            addLogEntry(`[${timeStr}] Verified: ${data.gesture} → ${data.action} (${data.latency_ms}ms)`, 'verified');
 
-            // Update states
             if (data.entity_states) updateStates(data.entity_states);
             setTimeout(clearHighlights, 1200);
         });
@@ -775,18 +1167,16 @@
             playChime(false);
             const pill = document.getElementById('aiStatusPill');
             pill.className = 'ai-status-pill revoked';
-            pill.textContent = 'FALSE TRIGGER REVOKED';
+            pill.textContent = 'REVOKED';
 
-            document.getElementById('aiVerdictTitle').textContent = `🚫 Revoked: False Gesture Blocked!`;
-            document.getElementById('aiExplanation').textContent = `Reason: ${data.rejection_reason} — ${data.explanation}`;
+            document.getElementById('aiVerdictTitle').textContent = `Blocked: False Trigger`;
+            document.getElementById('aiExplanation').textContent = `${data.rejection_reason} — ${data.explanation}`;
             document.getElementById('aiMetaLatency').textContent = `Latency: ${data.latency_ms} ms`;
 
-            // Refresh snapshot thumbnail
-            document.getElementById('aiSnapshotImg').src = `/snapshot/latest?t=${Date.now()}`;
+            document.getElementById('aiSnapshotImg').src = apiUrl(`snapshot/latest?t=${Date.now()}`);
 
-            // Log
-            const timeStr = new Date().toLocaleTimeString();
-            addLogEntry(`[${timeStr}] 🚫 REVOKED: Blocked false trigger (${data.rejection_reason})`, 'revoked');
+            const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            addLogEntry(`[${timeStr}] Blocked: ${data.rejection_reason}`, 'revoked');
             setTimeout(clearHighlights, 1200);
         });
 
@@ -795,13 +1185,20 @@
         });
 
         function updateStates(states) {
+            let onCount = 0;
             for (let i = 1; i <= 5; i++) {
                 const s = states[`entity_${i}`];
                 const el = document.getElementById(`state_${i}`);
                 if (el && s) {
+                    const isOn = s.toLowerCase() === 'on';
+                    if (isOn) onCount++;
                     el.textContent = s.toUpperCase();
-                    el.className = s === 'on' ? 'state-switch on' : 'state-switch';
+                    el.className = isOn ? 'state-switch on' : 'state-switch';
                 }
+            }
+            const badge = document.getElementById('activeCountBadge');
+            if (badge) {
+                badge.textContent = `${onCount}/5 Active`;
             }
         }
 
@@ -823,9 +1220,15 @@
             box.insertBefore(div, box.firstChild);
         }
 
+        function clearLogs() {
+            const box = document.getElementById('logBox');
+            box.innerHTML = '';
+            addLogEntry('Log cleared.', 'normal');
+        }
+
         async function toggleDevice(num) {
             try {
-                const res = await fetch('/api/toggle', {
+                const res = await fetch(apiUrl('api/toggle'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ entity_num: num })
@@ -837,10 +1240,9 @@
             }
         }
 
-        // Settings Modal
         async function openSettings() {
             try {
-                const res = await fetch('/config');
+                const res = await fetch(apiUrl('config'));
                 const cfg = await res.json();
                 document.getElementById('inputModel').value = cfg.openai_model || 'gpt-4o-mini';
                 document.getElementById('inputRtsp').value = cfg.rtsp_url || '';
@@ -854,9 +1256,14 @@
             document.getElementById('settingsModal').style.display = 'none';
         }
 
+        function handleOverlayClick(e) {
+            if (e.target.id === 'settingsModal') closeSettings();
+        }
+
         async function saveSettings() {
+            const modelVal = document.getElementById('inputModel').value.trim();
             const payload = {
-                openai_model: document.getElementById('inputModel').value.trim(),
+                openai_model: modelVal,
                 rtsp_url: document.getElementById('inputRtsp').value.trim()
             };
             const key = document.getElementById('inputApiKey').value.trim();
@@ -868,17 +1275,23 @@
             const haToken = document.getElementById('inputHaToken').value.trim();
             if (haToken) payload.ha_token = haToken;
 
-            await fetch('/api/settings', {
+            await fetch(apiUrl('api/settings'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
 
+            if (modelVal) {
+                document.getElementById('badgeAi').textContent = modelVal;
+            }
             closeSettings();
         }
 
-        // Fetch initial config
-        fetch('/config').then(r => r.json()).then(cfg => {
+        // Load initial configuration and health status
+        fetch(apiUrl('config')).then(r => r.json()).then(cfg => {
+            if (cfg.openai_model) {
+                document.getElementById('badgeAi').textContent = cfg.openai_model;
+            }
             if (cfg.entities) {
                 for (let i = 1; i <= 5; i++) {
                     const eid = cfg.entities[`entity_${i}`];
@@ -888,7 +1301,20 @@
                     }
                 }
             }
-        });
+        }).catch(() => {});
+
+        function syncHealth() {
+            fetch(apiUrl('health')).then(r => r.json()).then(h => {
+                if (typeof h.ha_connected === 'boolean') {
+                    setHaBadge(h.ha_connected);
+                }
+                if (h.entity_states) {
+                    updateStates(h.entity_states);
+                }
+            }).catch(() => {});
+        }
+        syncHealth();
+        setInterval(syncHealth, 5000);
     </script>
 </body>
 </html>

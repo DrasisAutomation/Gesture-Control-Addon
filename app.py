@@ -1347,13 +1347,24 @@ class GestureServer:
         self._setup_sockets()
 
     def _setup_routes(self):
-        self.app.router.add_get("/", self.serve_index)
-        self.app.router.add_get("/video", self.video_stream)
-        self.app.router.add_get("/snapshot/latest", self.get_latest_snapshot)
-        self.app.router.add_get("/health", self.health_check)
-        self.app.router.add_get("/config", self.get_config)
-        self.app.router.add_post("/api/toggle", self.api_toggle)
-        self.app.router.add_post("/api/settings", self.api_settings)
+        # Root routes + Subpath routes (e.g. /gesture, /gesture_control, /api/hassio_ingress/<token>)
+        prefixes = ["", "/{prefix}", "/api/hassio_ingress/{token}"]
+        for p in prefixes:
+            if p == "":
+                self.app.router.add_get("/", self.serve_index)
+            else:
+                self.app.router.add_get(p, self.serve_index)
+                self.app.router.add_get(f"{p}/", self.serve_index)
+                self.app.router.add_route("*", f"{p}/socket.io/", self.sio.handle_request)
+                self.app.router.add_route("*", f"{p}/socket.io", self.sio.handle_request)
+
+            self.app.router.add_get(f"{p}/video", self.video_stream)
+            self.app.router.add_get(f"{p}/snapshot/latest", self.get_latest_snapshot)
+            self.app.router.add_get(f"{p}/health", self.health_check)
+            self.app.router.add_get(f"{p}/config", self.get_config)
+            self.app.router.add_post(f"{p}/api/toggle", self.api_toggle)
+            self.app.router.add_post(f"{p}/api/settings", self.api_settings)
+
         self.app.router.add_static("/static", str(BASE_DIR / "web"))
 
     def _setup_sockets(self):
@@ -1407,9 +1418,9 @@ class GestureServer:
                 body=chatgpt_verifier.latest_snapshot_bytes,
                 content_type="image/jpeg"
             )
-        # Return fallback blank 1x1 image
-        blank = np.zeros((120, 160, 3), dtype=np.uint8)
-        cv2.putText(blank, "No Snapshot", (20, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        # Return fallback light-themed placeholder image
+        blank = np.full((120, 160, 3), (249, 245, 241), dtype=np.uint8)
+        cv2.putText(blank, "No Snapshot", (30, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (139, 116, 100), 1, cv2.LINE_AA)
         _, j = cv2.imencode(".jpg", blank)
         return aiohttp.web.Response(body=j.tobytes(), content_type="image/jpeg")
 
@@ -1417,6 +1428,7 @@ class GestureServer:
         return aiohttp.web.json_response({
             "status": "ok",
             "ha_connected": self.ha_client.connected if self.ha_client else False,
+            "entity_states": self.ha_client.entity_states if self.ha_client else {},
             "ai_verification_enabled": config.get("ai_verification_enabled", True),
             "camera_running": self.gesture_processor.running if self.gesture_processor else False,
             "fps": self.gesture_processor.current_fps if self.gesture_processor else 0,
