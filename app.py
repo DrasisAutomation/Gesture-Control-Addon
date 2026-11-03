@@ -634,6 +634,7 @@ class CameraStreamReader:
         self.latest_frame: Optional[np.ndarray] = None
         self.is_connected = False
         self.last_frame_time = 0.0
+        self.first_frame_logged = False
 
     def start(self):
         self.running = True
@@ -652,8 +653,19 @@ class CameraStreamReader:
             self.cap = None
 
         if rtsp:
-            logger.info(f"Connecting to RTSP Camera stream: {rtsp}")
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+            # Handle unescaped '@' inside RTSP password (e.g. rtsp://admin:Admin@1234@192.168.2.41:554/...)
+            if rtsp.startswith(("rtsp://", "rtsps://")):
+                scheme, rest = rtsp.split("://", 1)
+                slash_idx = rest.find("/")
+                auth_host = rest[:slash_idx] if slash_idx != -1 else rest
+                path_part = rest[slash_idx:] if slash_idx != -1 else ""
+                if auth_host.count("@") > 1:
+                    userinfo, hostpart = auth_host.rsplit("@", 1)
+                    userinfo = userinfo.replace("@", "%40")
+                    rtsp = f"{scheme}://{userinfo}@{hostpart}{path_part}"
+
+            logger.info("Connecting to RTSP Camera stream...")
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay"
             self.cap = cv2.VideoCapture(rtsp, cv2.CAP_FFMPEG)
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         else:
@@ -667,11 +679,13 @@ class CameraStreamReader:
                 self.cap = cv2.VideoCapture(src_idx)
 
         if self.cap and self.cap.isOpened():
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.get("frame_width", 640))
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.get("frame_height", 480))
-            self.cap.set(cv2.CAP_PROP_FPS, config.get("fps", 20))
+            if not rtsp:
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.get("frame_width", 640))
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.get("frame_height", 480))
+                self.cap.set(cv2.CAP_PROP_FPS, config.get("fps", 20))
             self.is_connected = True
             self.last_frame_time = time.time()
+            self.first_frame_logged = False
             logger.info("✅ Camera stream connected successfully")
             return True
 
@@ -683,6 +697,9 @@ class CameraStreamReader:
         if not self._open():
             time.sleep(2)
 
+        target_w = int(config.get("frame_width", 640))
+        target_h = int(config.get("frame_height", 480))
+
         while self.running:
             if self.cap is None or not self.cap.isOpened():
                 time.sleep(1.0)
@@ -690,14 +707,20 @@ class CameraStreamReader:
                 continue
 
             ret, frame = self.cap.read()
-            if ret and frame is not None:
+            if ret and frame is not None and frame.size > 0:
+                fh, fw = frame.shape[:2]
+                if fw != target_w or fh != target_h:
+                    frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
+                if not self.first_frame_logged:
+                    logger.info(f"📹 First camera frame received ({fw}x{fh} -> {target_w}x{target_h})")
+                    self.first_frame_logged = True
                 with self.lock:
                     self.latest_frame = frame
                     self.last_frame_time = time.time()
                     self.is_connected = True
             else:
-                if time.time() - self.last_frame_time > 4.0:
-                    logger.warning("Camera stream stalled for > 4s, reconnecting...")
+                if time.time() - self.last_frame_time > 5.0:
+                    logger.warning("Camera stream stalled for > 5s, reconnecting...")
                     self._open()
                     self.last_frame_time = time.time()
                 time.sleep(0.01)
@@ -764,8 +787,8 @@ class GestureProcessor:
 
         # Video stream frame holder (zero-copy pre-encoded for smooth streaming)
         self.latest_display_frame: Optional[np.ndarray] = None
-        self.latest_jpeg_bytes: Optional[bytes] = None
-        self.frame_id: int = 0
+        self.latest_jpeg_bytes: Optional[bytes] = self._make_status_jpeg("Connecting to Camera Stream...")
+        self.frame_id: int = 1
         self.frame_lock = threading.Lock()
 
         # Stats
@@ -773,6 +796,15 @@ class GestureProcessor:
         self.fps_counter = 0
         self.last_fps_time = time.time()
         self.loop: Optional[asyncio.AbstractEventLoop] = None
+
+    @staticmethod
+    def _make_status_jpeg(message: str) -> bytes:
+        canvas = np.full((480, 640, 3), (30, 23, 15), dtype=np.uint8)
+        cv2.rectangle(canvas, (0, 0), (640, 48), (15, 23, 42), -1)
+        cv2.putText(canvas, "DRASIS GESTURE AI", (16, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 215, 255), 2, cv2.LINE_AA)
+        cv2.putText(canvas, message, (140, 245), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (226, 232, 240), 2, cv2.LINE_AA)
+        _, jpeg = cv2.imencode(".jpg", canvas, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        return jpeg.tobytes()
 
     def set_loop(self, loop: asyncio.AbstractEventLoop):
         self.loop = loop
@@ -1360,6 +1392,8 @@ class GestureServer:
     def _setup_routes(self):
         self.app.router.add_get("/", self.serve_index)
         self.app.router.add_get("/video", self.video_stream)
+        self.app.router.add_get("/ws/video", self.video_ws)
+        self.app.router.add_get("/frame", self.get_latest_frame)
         self.app.router.add_get("/snapshot/latest", self.get_latest_snapshot)
         self.app.router.add_get("/health", self.health_check)
         self.app.router.add_get("/config", self.get_config)
@@ -1374,6 +1408,10 @@ class GestureServer:
         clean_path = re.sub(r"/+", "/", request.path).rstrip("/")
         if "/socket.io" in clean_path:
             return await self.sio.handle_request(request)
+        if clean_path.endswith("/ws/video"):
+            return await self.video_ws(request)
+        if clean_path.endswith("/frame"):
+            return await self.get_latest_frame(request)
         if clean_path.endswith("/video"):
             return await self.video_stream(request)
         if clean_path.endswith("/snapshot/latest"):
@@ -1402,12 +1440,56 @@ class GestureServer:
         index_file = BASE_DIR / "web" / "index.html"
         return aiohttp.web.FileResponse(index_file)
 
+    async def video_ws(self, request):
+        """Binary WebSocket video stream — bypasses HA Ingress / Cloudflare MJPEG boundary stripping."""
+        ws = aiohttp.web.WebSocketResponse(heartbeat=20.0)
+        await ws.prepare(request)
+
+        last_id = -1
+        try:
+            while not ws.closed:
+                frame_bytes = None
+                if self.gesture_processor:
+                    with self.gesture_processor.frame_lock:
+                        if self.gesture_processor.latest_jpeg_bytes is not None:
+                            if self.gesture_processor.frame_id != last_id:
+                                frame_bytes = self.gesture_processor.latest_jpeg_bytes
+                                last_id = self.gesture_processor.frame_id
+
+                if frame_bytes is not None:
+                    await ws.send_bytes(frame_bytes)
+                await asyncio.sleep(0.04)  # ~25 FPS smooth binary push
+        except (ConnectionResetError, asyncio.CancelledError, Exception):
+            pass
+        return ws
+
+    async def get_latest_frame(self, request):
+        """Return latest camera JPEG frame for universal HTTP fallback."""
+        frame_bytes = None
+        if self.gesture_processor:
+            with self.gesture_processor.frame_lock:
+                frame_bytes = self.gesture_processor.latest_jpeg_bytes
+        if not frame_bytes:
+            frame_bytes = GestureProcessor._make_status_jpeg("Waiting for Camera Frame...")
+        return aiohttp.web.Response(
+            body=frame_bytes,
+            content_type="image/jpeg",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache"
+            }
+        )
+
     async def video_stream(self, request):
         """Zero-latency smooth MJPEG video stream (works natively in any browser)."""
-        response = aiohttp.web.StreamResponse()
-        response.content_type = "multipart/x-mixed-replace; boundary=frame"
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
+        response = aiohttp.web.StreamResponse(
+            headers={
+                "Content-Type": "multipart/x-mixed-replace; boundary=frame",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "X-Accel-Buffering": "no"
+            }
+        )
         await response.prepare(request)
 
         last_id = -1
@@ -1422,12 +1504,14 @@ class GestureServer:
                                 last_id = self.gesture_processor.frame_id
 
                 if frame_bytes is not None:
-                    await response.write(
+                    header = (
                         b"--frame\r\n"
-                        b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
+                        b"Content-Type: image/jpeg\r\n"
+                        b"Content-Length: " + str(len(frame_bytes)).encode("ascii") + b"\r\n\r\n"
                     )
-                await asyncio.sleep(0.03)  # ~33 FPS smooth delivery
-        except (ConnectionResetError, asyncio.CancelledError):
+                    await response.write(header + frame_bytes + b"\r\n")
+                await asyncio.sleep(0.035)
+        except (ConnectionResetError, asyncio.CancelledError, Exception):
             pass
 
         return response

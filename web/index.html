@@ -863,7 +863,7 @@
                 </div>
                 <div class="video-wrapper">
                     <div class="video-box">
-                        <img id="videoStream" src="video" alt="Real-time camera feed">
+                        <img id="videoStream" alt="Real-time camera feed">
                     </div>
                 </div>
             </section>
@@ -1062,9 +1062,59 @@
             return basePath + endpoint.replace(/^\/+/, '');
         }
 
-        // Ensure stream and snapshot images use the resolved subpath
-        document.getElementById('videoStream').src = apiUrl('video');
+        // Ensure snapshot image uses the resolved subpath
         document.getElementById('aiSnapshotImg').src = apiUrl('snapshot/latest');
+
+        // Dual-Mode Camera Stream (Binary WebSocket + HTTP /frame fallback for HA Ingress & Remote URLs)
+        const videoImg = document.getElementById('videoStream');
+        let prevBlobUrl = null;
+        let lastWsFrameTime = 0;
+        let httpFrameInFlight = false;
+
+        function startWsVideo() {
+            try {
+                const wsProto = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+                const wsUrl = wsProto + window.location.host + apiUrl('ws/video');
+                const vws = new WebSocket(wsUrl);
+                vws.binaryType = 'blob';
+
+                vws.onmessage = (e) => {
+                    if (e.data instanceof Blob) {
+                        lastWsFrameTime = Date.now();
+                        const newUrl = URL.createObjectURL(e.data);
+                        videoImg.src = newUrl;
+                        if (prevBlobUrl) URL.revokeObjectURL(prevBlobUrl);
+                        prevBlobUrl = newUrl;
+                    }
+                };
+
+                vws.onclose = () => {
+                    setTimeout(startWsVideo, 2000);
+                };
+            } catch (err) {}
+        }
+
+        // HTTP /frame fallback loop when WebSocket is connecting or unavailable
+        function pollHttpFrame() {
+            if (Date.now() - lastWsFrameTime > 600 && !httpFrameInFlight) {
+                httpFrameInFlight = true;
+                const tmp = new Image();
+                tmp.onload = () => {
+                    if (Date.now() - lastWsFrameTime > 600) {
+                        videoImg.src = tmp.src;
+                    }
+                    httpFrameInFlight = false;
+                };
+                tmp.onerror = () => {
+                    httpFrameInFlight = false;
+                };
+                tmp.src = apiUrl(`frame?t=${Date.now()}`);
+            }
+        }
+
+        videoImg.src = apiUrl(`frame?t=${Date.now()}`);
+        startWsVideo();
+        setInterval(pollHttpFrame, 120);
 
         const socket = io(window.location.origin, {
             path: basePath + 'socket.io',
