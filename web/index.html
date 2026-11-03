@@ -46,8 +46,6 @@
 
             --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
             --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
-            --shadow-md: 0 4px 12px -2px rgba(15, 23, 42, 0.06), 0 2px 6px -1px rgba(15, 23, 42, 0.04);
-            --shadow-lg: 0 12px 32px -4px rgba(15, 23, 42, 0.10);
         }
 
         * {
@@ -71,7 +69,7 @@
 
         /* Top Navigation Header */
         header {
-            background: rgba(255, 255, 255, 0.88);
+            background: rgba(255, 255, 255, 0.92);
             backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);
             border-bottom: 1px solid var(--border-subtle);
@@ -194,32 +192,83 @@
             background: var(--danger);
         }
 
-        .btn-icon {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
+        /* Live System Diagnostics Bar */
+        .diagnostics-strip {
+            max-width: 1360px;
+            width: 100%;
+            margin: 14px auto 0;
+            padding: 0 20px;
+        }
+
+        .diagnostics-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+        }
+
+        .diag-pill {
             background: var(--bg-surface);
-            color: var(--text-primary);
             border: 1px solid var(--border-subtle);
-            padding: 6px 12px;
-            border-radius: var(--radius-sm);
-            font-size: 12.5px;
-            font-weight: 500;
-            font-family: inherit;
-            cursor: pointer;
-            transition: all 0.15s ease;
+            border-radius: var(--radius-md);
+            padding: 10px 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
             box-shadow: var(--shadow-xs);
         }
 
-        .btn-icon:hover {
-            background: var(--bg-subtle);
-            border-color: var(--border-focus);
+        .diag-left {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
         }
 
-        .btn-icon svg {
-            width: 15px;
-            height: 15px;
+        .diag-label {
+            font-size: 10.5px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--text-muted);
+        }
+
+        .diag-value {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .diag-indicator {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 3px 8px;
+            border-radius: var(--radius-full);
+            background: var(--bg-subtle);
             color: var(--text-secondary);
+            flex-shrink: 0;
+        }
+
+        .diag-indicator.ok {
+            background: var(--success-soft);
+            color: var(--success);
+            border: 1px solid var(--success-border);
+        }
+
+        .diag-indicator.warn {
+            background: var(--warning-soft);
+            color: var(--warning);
+            border: 1px solid var(--warning-border);
+        }
+
+        .diag-indicator.active {
+            background: var(--accent-soft);
+            color: var(--accent);
+            border: 1px solid var(--accent-border);
         }
 
         /* Main Workspace Grid */
@@ -227,10 +276,10 @@
             max-width: 1360px;
             width: 100%;
             margin: 0 auto;
-            padding: 20px;
+            padding: 14px 20px 24px;
             display: grid;
-            grid-template-columns: 1.15fr 0.85fr;
-            gap: 20px;
+            grid-template-columns: 1.12fr 0.88fr;
+            gap: 18px;
             flex: 1;
             align-items: start;
         }
@@ -258,6 +307,7 @@
             align-items: center;
             justify-content: space-between;
             gap: 10px;
+            flex-wrap: wrap;
         }
 
         .card-title {
@@ -298,7 +348,7 @@
             border-radius: var(--radius-md);
             overflow: hidden;
             aspect-ratio: 4 / 3;
-            max-height: 480px;
+            max-height: 460px;
             width: 100%;
             display: flex;
             align-items: center;
@@ -459,7 +509,7 @@
             background: var(--bg-surface);
             border: 1px solid var(--border-subtle);
             border-radius: var(--radius-md);
-            padding: 12px 14px;
+            padding: 11px 14px;
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -492,8 +542,8 @@
         }
 
         .gesture-badge {
-            width: 40px;
-            height: 40px;
+            width: 38px;
+            height: 38px;
             border-radius: 10px;
             background: var(--bg-subtle);
             border: 1px solid var(--border-subtle);
@@ -507,7 +557,7 @@
         }
 
         .gesture-emoji {
-            font-size: 16px;
+            font-size: 15px;
         }
 
         .gesture-num {
@@ -522,7 +572,7 @@
         }
 
         .device-texts h3 {
-            font-size: 13.5px;
+            font-size: 13px;
             font-weight: 600;
             color: var(--text-primary);
             white-space: nowrap;
@@ -531,7 +581,7 @@
         }
 
         .device-texts p {
-            font-size: 11.5px;
+            font-size: 11px;
             font-family: 'JetBrains Mono', monospace;
             color: var(--text-muted);
             white-space: nowrap;
@@ -541,7 +591,7 @@
 
         .state-switch {
             padding: 5px 12px;
-            min-width: 56px;
+            min-width: 54px;
             text-align: center;
             border-radius: var(--radius-full);
             font-size: 11px;
@@ -560,50 +610,41 @@
             border-color: var(--success-border);
         }
 
-        /* Audit Log */
-        .log-box {
-            padding: 12px;
-            height: 210px;
-            overflow-y: auto;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 11.5px;
+        /* History Dropdown & Proper Log List */
+        .log-controls {
             display: flex;
-            flex-direction: column;
-            gap: 6px;
-            background: var(--bg-muted);
+            align-items: center;
+            gap: 8px;
         }
 
-        .log-entry {
-            padding: 8px 10px;
-            border-radius: var(--radius-sm);
-            background: var(--bg-surface);
+        .log-filter-select {
+            appearance: none;
+            -webkit-appearance: none;
+            background: var(--bg-subtle) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") no-repeat right 9px center;
             border: 1px solid var(--border-subtle);
-            color: var(--text-secondary);
-            line-height: 1.4;
-            word-break: break-word;
+            border-radius: var(--radius-sm);
+            padding: 4px 28px 4px 10px;
+            font-size: 11.5px;
+            font-weight: 500;
+            font-family: inherit;
+            color: var(--text-primary);
+            cursor: pointer;
         }
 
-        .log-entry.verified {
-            background: var(--success-soft);
-            border-color: var(--success-border);
-            color: var(--success);
-        }
-
-        .log-entry.revoked {
-            background: var(--danger-soft);
-            border-color: var(--danger-border);
-            color: var(--danger);
+        .log-filter-select:focus {
+            outline: none;
+            border-color: var(--accent);
         }
 
         .btn-clear-log {
-            background: transparent;
-            border: none;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
             font-size: 11.5px;
             font-weight: 500;
-            color: var(--text-muted);
+            color: var(--text-secondary);
             cursor: pointer;
-            padding: 2px 6px;
-            border-radius: 6px;
+            padding: 4px 10px;
+            border-radius: var(--radius-sm);
         }
 
         .btn-clear-log:hover {
@@ -611,141 +652,169 @@
             background: var(--bg-subtle);
         }
 
-        /* Settings Modal */
-        .modal-overlay {
-            position: fixed;
-            inset: 0;
-            background: rgba(15, 23, 42, 0.35);
-            backdrop-filter: blur(4px);
-            -webkit-backdrop-filter: blur(4px);
-            display: none;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-            padding: 16px;
-        }
-
-        .modal-content {
+        /* Collapsible Gesture Trigger History Dropdown */
+        .history-dropdown {
+            border-bottom: 1px solid var(--border-subtle);
             background: var(--bg-surface);
-            border: 1px solid var(--border-subtle);
-            border-radius: var(--radius-lg);
-            width: 100%;
-            max-width: 480px;
-            max-height: 90vh;
-            overflow-y: auto;
-            padding: 20px;
-            box-shadow: var(--shadow-lg);
-            display: flex;
-            flex-direction: column;
-            gap: 14px;
         }
 
-        .modal-header {
+        .history-dropdown summary {
+            list-style: none;
+            padding: 10px 16px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding-bottom: 10px;
-            border-bottom: 1px solid var(--border-subtle);
-        }
-
-        .modal-header h2 {
-            font-size: 15px;
-            font-weight: 600;
-            color: var(--text-primary);
-        }
-
-        .btn-close-modal {
-            background: transparent;
-            border: none;
-            color: var(--text-muted);
-            font-size: 18px;
-            cursor: pointer;
-            padding: 4px 8px;
-            border-radius: 6px;
-        }
-
-        .btn-close-modal:hover {
+            user-select: none;
             background: var(--bg-subtle);
-            color: var(--text-primary);
         }
 
-        .form-group {
+        .history-dropdown summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .history-dropdown summary .chevron {
+            transition: transform 0.2s ease;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .history-dropdown[open] summary .chevron {
+            transform: rotate(180deg);
+        }
+
+        .history-dropdown-body {
+            max-height: 155px;
+            overflow-y: auto;
+            padding: 10px 12px;
             display: flex;
             flex-direction: column;
-            gap: 5px;
-        }
-
-        .form-group label {
-            font-size: 12px;
-            font-weight: 500;
-            color: var(--text-secondary);
-        }
-
-        .form-group input {
+            gap: 6px;
             background: var(--bg-surface);
-            border: 1px solid var(--border-subtle);
-            border-radius: var(--radius-sm);
-            padding: 9px 12px;
-            color: var(--text-primary);
-            font-size: 13px;
-            font-family: inherit;
-            transition: border-color 0.15s ease, box-shadow 0.15s ease;
         }
 
-        .form-group input:focus {
-            outline: none;
-            border-color: var(--accent);
-            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
-        }
-
-        .modal-actions {
+        /* Full Activity & System Log List */
+        .log-box {
+            padding: 12px;
+            height: 270px;
+            overflow-y: auto;
             display: flex;
-            justify-content: flex-end;
+            flex-direction: column;
             gap: 8px;
-            margin-top: 6px;
-            padding-top: 12px;
-            border-top: 1px solid var(--border-subtle);
+            background: var(--bg-muted);
         }
 
-        .btn-primary {
-            background: var(--text-primary);
-            color: #ffffff;
-            border: 1px solid var(--text-primary);
-            padding: 8px 16px;
+        .log-item {
+            padding: 9px 12px;
             border-radius: var(--radius-sm);
-            font-size: 13px;
-            font-weight: 500;
-            font-family: inherit;
-            cursor: pointer;
-            transition: opacity 0.15s ease;
-        }
-
-        .btn-primary:hover {
-            opacity: 0.9;
-        }
-
-        .btn-secondary {
             background: var(--bg-surface);
-            color: var(--text-secondary);
             border: 1px solid var(--border-subtle);
-            padding: 8px 16px;
-            border-radius: var(--radius-sm);
-            font-size: 13px;
-            font-weight: 500;
-            font-family: inherit;
-            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            box-shadow: var(--shadow-xs);
         }
 
-        .btn-secondary:hover {
+        .log-item-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .log-badge-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+        }
+
+        .log-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9.5px;
+            font-weight: 600;
+            padding: 2px 6px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            flex-shrink: 0;
             background: var(--bg-subtle);
+            color: var(--text-secondary);
+        }
+
+        .log-badge.verified {
+            background: var(--success-soft);
+            color: var(--success);
+            border: 1px solid var(--success-border);
+        }
+
+        .log-badge.revoked {
+            background: var(--danger-soft);
+            color: var(--danger);
+            border: 1px solid var(--danger-border);
+        }
+
+        .log-badge.detected,
+        .log-badge.action {
+            background: var(--accent-soft);
+            color: var(--accent);
+            border: 1px solid var(--accent-border);
+        }
+
+        .log-badge.camera,
+        .log-badge.reset {
+            background: var(--warning-soft);
+            color: var(--warning);
+            border: 1px solid var(--warning-border);
+        }
+
+        .log-title {
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .log-time {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10.5px;
+            color: var(--text-muted);
+            flex-shrink: 0;
+        }
+
+        .log-detail {
+            font-size: 11.5px;
+            color: var(--text-secondary);
+            line-height: 1.4;
+            word-break: break-word;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 18px 10px;
+            font-size: 12px;
+            color: var(--text-muted);
         }
 
         /* Responsive Mobile & Tablet Breakpoints */
         @media (max-width: 960px) {
+            .diagnostics-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
             .workspace {
                 grid-template-columns: 1fr;
-                padding: 14px;
+                padding: 12px 14px 20px;
                 gap: 14px;
+            }
+
+            .diagnostics-strip {
+                padding: 0 14px;
             }
         }
 
@@ -762,12 +831,22 @@
                 display: none;
             }
 
-            .btn-icon span {
-                display: none;
+            .diagnostics-strip {
+                padding: 0 10px;
+                margin-top: 10px;
             }
 
-            .btn-icon {
-                padding: 7px 9px;
+            .diagnostics-grid {
+                grid-template-columns: 1fr 1fr;
+                gap: 8px;
+            }
+
+            .diag-pill {
+                padding: 8px 10px;
+            }
+
+            .diag-value {
+                font-size: 12px;
             }
 
             .workspace {
@@ -791,26 +870,14 @@
             }
 
             .device-card {
-                padding: 11px 12px;
-            }
-
-            .modal-overlay {
-                align-items: flex-end;
-                padding: 0;
-            }
-
-            .modal-content {
-                border-bottom-left-radius: 0;
-                border-bottom-right-radius: 0;
-                max-width: 100%;
-                padding: 18px 16px 24px;
+                padding: 10px 12px;
             }
         }
     </style>
 </head>
 <body>
 
-    <!-- Minimal Header -->
+    <!-- Minimal Header (No Settings Button) -->
     <header>
         <div class="header-inner">
             <div class="brand">
@@ -834,16 +901,46 @@
                     <span class="status-dot"></span>
                     <span id="badgeHaText">HA Connected</span>
                 </div>
-                <button class="btn-icon" onclick="openSettings()" title="Settings">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="12" cy="12" r="3"></circle>
-                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-                    </svg>
-                    <span>Settings</span>
-                </button>
             </div>
         </div>
     </header>
+
+    <!-- Live System Working Status Strip -->
+    <section class="diagnostics-strip" aria-label="System Status">
+        <div class="diagnostics-grid">
+            <div class="diag-pill">
+                <div class="diag-left">
+                    <span class="diag-label">Camera Feed</span>
+                    <span class="diag-value" id="diagCamText">Connecting...</span>
+                </div>
+                <span class="diag-indicator warn" id="diagFpsBadge">-- FPS</span>
+            </div>
+
+            <div class="diag-pill">
+                <div class="diag-left">
+                    <span class="diag-label">Hand Detection</span>
+                    <span class="diag-value" id="diagHandText">Scanning...</span>
+                </div>
+                <span class="diag-indicator" id="diagHoldBadge">0%</span>
+            </div>
+
+            <div class="diag-pill">
+                <div class="diag-left">
+                    <span class="diag-label">Pipeline State</span>
+                    <span class="diag-value" id="diagPipelineText">Ready</span>
+                </div>
+                <span class="diag-indicator ok" id="diagPipelineBadge">READY</span>
+            </div>
+
+            <div class="diag-pill">
+                <div class="diag-left">
+                    <span class="diag-label">Smart Devices</span>
+                    <span class="diag-value" id="diagDevicesText">0 of 5 ON</span>
+                </div>
+                <span class="diag-indicator" id="diagHaBadge">SYNCED</span>
+            </div>
+        </div>
+    </section>
 
     <!-- Main Workspace -->
     <main class="workspace">
@@ -857,9 +954,9 @@
                             <path d="M23 7l-7 5 7 5V7z"></path>
                             <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
                         </svg>
-                        <span>Camera Stream</span>
+                        <span>Live Camera Stream</span>
                     </div>
-                    <span class="live-indicator">LIVE</span>
+                    <span class="live-indicator" id="streamModeBadge">LIVE</span>
                 </div>
                 <div class="video-wrapper">
                     <div class="video-box">
@@ -877,12 +974,12 @@
                         </svg>
                         <span>AI Vision Verification</span>
                     </div>
-                    <div class="ai-status-pill idle" id="aiStatusPill">IDLE</div>
+                    <div class="ai-status-pill ready" id="aiStatusPill">READY</div>
                 </div>
 
                 <div class="ai-body">
                     <div class="snapshot-preview">
-                        <img id="aiSnapshotImg" src="snapshot/latest" alt="Latest AI Snapshot">
+                        <img id="aiSnapshotImg" alt="Latest AI Snapshot">
                     </div>
 
                     <div class="ai-details">
@@ -899,7 +996,7 @@
             </section>
         </div>
 
-        <!-- Right Column: Devices & Activity Log -->
+        <!-- Right Column: Devices, History Dropdown & Activity Log -->
         <div class="col">
             <section class="surface-card">
                 <div class="card-header">
@@ -910,7 +1007,7 @@
                         </svg>
                         <span>Gesture Devices</span>
                     </div>
-                    <span class="card-badge" id="activeCountBadge">1–5 Fingers</span>
+                    <span class="card-badge" id="activeCountBadge">0/5 Active</span>
                 </div>
 
                 <div class="devices-list" id="devicesList">
@@ -991,66 +1088,46 @@
                 </div>
             </section>
 
-            <!-- Live Audit Log -->
+            <!-- History Dropdown & Live System Logs -->
             <section class="surface-card">
                 <div class="card-header">
                     <div class="card-title">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
                         </svg>
-                        <span>Activity Log</span>
+                        <span>History & Activity Logs</span>
                     </div>
-                    <button class="btn-clear-log" onclick="clearLogs()">Clear</button>
+                    <div class="log-controls">
+                        <select id="logFilterSelect" class="log-filter-select" onchange="renderLogs()" aria-label="Filter logs">
+                            <option value="all">All Logs</option>
+                            <option value="verified">Verified Triggers</option>
+                            <option value="revoked">Blocked Triggers</option>
+                            <option value="detected">Detections & Resets</option>
+                            <option value="system">Camera & System</option>
+                        </select>
+                        <button class="btn-clear-log" onclick="clearLogs()">Clear</button>
+                    </div>
                 </div>
-                <div class="log-box" id="logBox">
-                    <div class="log-entry">
-                        <span>System initialized. Vision pipeline ready.</span>
+
+                <!-- Collapsible Gesture Trigger History Dropdown -->
+                <details class="history-dropdown" open>
+                    <summary>
+                        <span id="triggerHistorySummary">Recent Gesture Trigger History (0)</span>
+                        <span class="chevron">▼</span>
+                    </summary>
+                    <div class="history-dropdown-body" id="triggerHistoryList">
+                        <div class="empty-state">No gesture triggers recorded yet. Show 1–5 fingers to the camera.</div>
                     </div>
+                </details>
+
+                <!-- Detailed Scrollable System & Event Logs -->
+                <div class="log-box" id="logBox">
+                    <div class="empty-state">Loading live system logs...</div>
                 </div>
             </section>
         </div>
 
     </main>
-
-    <!-- Settings Modal -->
-    <div class="modal-overlay" id="settingsModal" onclick="handleOverlayClick(event)">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2>Configuration</h2>
-                <button class="btn-close-modal" onclick="closeSettings()" aria-label="Close">&times;</button>
-            </div>
-
-            <div class="form-group">
-                <label for="inputApiKey">OpenAI API Key</label>
-                <input type="password" id="inputApiKey" placeholder="sk-...">
-            </div>
-
-            <div class="form-group">
-                <label for="inputModel">OpenAI Vision Model</label>
-                <input type="text" id="inputModel" value="gpt-4o-mini">
-            </div>
-
-            <div class="form-group">
-                <label for="inputRtsp">Camera RTSP URL (leave empty for local webcam)</label>
-                <input type="text" id="inputRtsp" placeholder="rtsp://user:pass@ip:554/stream1">
-            </div>
-
-            <div class="form-group">
-                <label for="inputHaUrl">Home Assistant URL</label>
-                <input type="text" id="inputHaUrl" placeholder="http://homeassistant.local:8123">
-            </div>
-
-            <div class="form-group">
-                <label for="inputHaToken">Home Assistant Long-Lived Token</label>
-                <input type="password" id="inputHaToken" placeholder="Paste token to update">
-            </div>
-
-            <div class="modal-actions">
-                <button class="btn-secondary" onclick="closeSettings()">Cancel</button>
-                <button class="btn-primary" onclick="saveSettings()">Save Changes</button>
-            </div>
-        </div>
-    </div>
 
     <script>
         // Resolve base path dynamically so the UI works at "/", "////", "/gesture", or HA Ingress "/api/hassio_ingress/<token>/"
@@ -1094,7 +1171,6 @@
             } catch (err) {}
         }
 
-        // HTTP /frame fallback loop when WebSocket is connecting or unavailable
         function pollHttpFrame() {
             if (Date.now() - lastWsFrameTime > 600 && !httpFrameInFlight) {
                 httpFrameInFlight = true;
@@ -1116,6 +1192,7 @@
         startWsVideo();
         setInterval(pollHttpFrame, 120);
 
+        // Socket.IO connection
         const socket = io(window.location.origin, {
             path: basePath + 'socket.io',
             transports: ['polling', 'websocket']
@@ -1138,21 +1215,145 @@
             } catch (e) {}
         }
 
+        // Centralized logs state synced with backend
+        let allLogs = [];
+
         function setHaBadge(connected) {
             const badge = document.getElementById('badgeHa');
             const text = document.getElementById('badgeHaText');
+            const diagHa = document.getElementById('diagHaBadge');
             if (connected) {
                 badge.className = 'status-chip ha-chip online';
                 text.textContent = 'HA Connected';
+                if (diagHa) {
+                    diagHa.textContent = 'ONLINE';
+                    diagHa.className = 'diag-indicator ok';
+                }
             } else {
                 badge.className = 'status-chip ha-chip offline';
                 text.textContent = 'HA Offline';
+                if (diagHa) {
+                    diagHa.textContent = 'OFFLINE';
+                    diagHa.className = 'diag-indicator warn';
+                }
             }
         }
 
-        socket.on('connect', () => {
-            addLogEntry('Connected to live stream.', 'normal');
-        });
+        function updateDiagnostics(h) {
+            // 1. Camera status & FPS
+            const camText = document.getElementById('diagCamText');
+            const fpsBadge = document.getElementById('diagFpsBadge');
+            if (h.camera_connected) {
+                camText.textContent = 'Camera Online';
+                fpsBadge.textContent = `${h.fps || 0} FPS`;
+                fpsBadge.className = 'diag-indicator ok';
+            } else {
+                camText.textContent = 'Connecting Camera...';
+                fpsBadge.textContent = 'WAIT';
+                fpsBadge.className = 'diag-indicator warn';
+            }
+
+            // 2. Live Hand Detection & Stability Progress
+            const handText = document.getElementById('diagHandText');
+            const holdBadge = document.getElementById('diagHoldBadge');
+            if (h.hand_detected) {
+                handText.textContent = h.live_gesture || 'Hand Detected';
+                holdBadge.textContent = `Hold ${h.stability_progress || 0}%`;
+                holdBadge.className = 'diag-indicator active';
+                if (h.live_fingers >= 1 && h.live_fingers <= 5) {
+                    highlightCard(h.live_fingers);
+                }
+            } else {
+                handText.textContent = 'Scanning for Hand...';
+                holdBadge.textContent = '0%';
+                holdBadge.className = 'diag-indicator';
+                clearHighlights();
+            }
+
+            // 3. Pipeline State
+            const pipeText = document.getElementById('diagPipelineText');
+            const pipeBadge = document.getElementById('diagPipelineBadge');
+            const pState = h.pipeline_state || 'READY';
+            if (pState === 'ANALYZING') {
+                pipeText.textContent = 'Verifying Snapshot';
+                pipeBadge.textContent = 'AI BUSY';
+                pipeBadge.className = 'diag-indicator warn';
+            } else if (pState === 'WAITING_FOR_RESET') {
+                pipeText.textContent = 'Show Fist / Lower Hand';
+                pipeBadge.textContent = 'RESET REQD';
+                pipeBadge.className = 'diag-indicator warn';
+            } else {
+                pipeText.textContent = 'Ready for Gesture';
+                pipeBadge.textContent = 'READY';
+                pipeBadge.className = 'diag-indicator ok';
+            }
+        }
+
+        function renderLogs() {
+            const filter = document.getElementById('logFilterSelect').value;
+            const logBox = document.getElementById('logBox');
+            const historyList = document.getElementById('triggerHistoryList');
+            const historySummary = document.getElementById('triggerHistorySummary');
+
+            // 1. Render Trigger History Dropdown (Verified + Revoked + Manual Actions)
+            const triggerLogs = allLogs.filter(item =>
+                item.type === 'verified' || item.type === 'revoked' || item.type === 'action'
+            );
+            historySummary.textContent = `Recent Gesture Trigger History (${triggerLogs.length})`;
+
+            if (triggerLogs.length === 0) {
+                historyList.innerHTML = '<div class="empty-state">No gesture triggers recorded yet. Show 1–5 fingers to the camera.</div>';
+            } else {
+                historyList.innerHTML = triggerLogs.slice(0, 15).map(item => `
+                    <div class="log-item">
+                        <div class="log-item-top">
+                            <div class="log-badge-group">
+                                <span class="log-badge ${item.type}">${item.type.toUpperCase()}</span>
+                                <span class="log-title">${escapeHtml(item.title)}</span>
+                            </div>
+                            <span class="log-time">${escapeHtml(item.time || '')}${item.latency_ms ? ' · ' + item.latency_ms + 'ms' : ''}</span>
+                        </div>
+                        ${item.detail ? `<div class="log-detail">${escapeHtml(item.detail)}</div>` : ''}
+                    </div>
+                `).join('');
+            }
+
+            // 2. Filter & Render Full Activity Logs List
+            const filtered = allLogs.filter(item => {
+                if (filter === 'all') return true;
+                if (filter === 'verified') return item.type === 'verified' || item.type === 'action';
+                if (filter === 'revoked') return item.type === 'revoked';
+                if (filter === 'detected') return item.type === 'detected' || item.type === 'reset';
+                if (filter === 'system') return item.type === 'system' || item.type === 'camera';
+                return true;
+            });
+
+            if (filtered.length === 0) {
+                logBox.innerHTML = '<div class="empty-state">No logs matching selected filter.</div>';
+                return;
+            }
+
+            logBox.innerHTML = filtered.map(item => `
+                <div class="log-item">
+                    <div class="log-item-top">
+                        <div class="log-badge-group">
+                            <span class="log-badge ${item.type}">${item.type.toUpperCase()}</span>
+                            <span class="log-title">${escapeHtml(item.title)}</span>
+                        </div>
+                        <span class="log-time">${escapeHtml(item.time || '')}${item.latency_ms ? ' · ' + item.latency_ms + 'ms' : ''}</span>
+                    </div>
+                    ${item.detail ? `<div class="log-detail">${escapeHtml(item.detail)}</div>` : ''}
+                </div>
+            `).join('');
+        }
+
+        function escapeHtml(str) {
+            return String(str || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
 
         socket.on('status', (data) => {
             if (typeof data.haConnected === 'boolean') {
@@ -1185,6 +1386,7 @@
             document.getElementById('aiMetaGesture').textContent = `Candidate: ${data.gesture}`;
 
             highlightCard(data.fingers);
+            syncHealth();
         });
 
         socket.on('pipeline_reset', (data) => {
@@ -1193,6 +1395,7 @@
             pill.textContent = 'READY';
             document.getElementById('aiVerdictTitle').textContent = `System Ready (${data.reason === 'FIST' ? 'Fist Reset' : 'Hand Rested'})`;
             document.getElementById('aiExplanation').textContent = 'Unlocked. Show your next hand gesture (1 to 5 fingers).';
+            syncHealth();
         });
 
         socket.on('gesture_verified', (data) => {
@@ -1207,10 +1410,8 @@
 
             document.getElementById('aiSnapshotImg').src = apiUrl(`snapshot/latest?t=${Date.now()}`);
 
-            const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            addLogEntry(`[${timeStr}] Verified: ${data.gesture} → ${data.action} (${data.latency_ms}ms)`, 'verified');
-
             if (data.entity_states) updateStates(data.entity_states);
+            syncHealth();
             setTimeout(clearHighlights, 1200);
         });
 
@@ -1226,8 +1427,7 @@
 
             document.getElementById('aiSnapshotImg').src = apiUrl(`snapshot/latest?t=${Date.now()}`);
 
-            const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            addLogEntry(`[${timeStr}] Blocked: ${data.rejection_reason}`, 'revoked');
+            syncHealth();
             setTimeout(clearHighlights, 1200);
         });
 
@@ -1251,6 +1451,10 @@
             if (badge) {
                 badge.textContent = `${onCount}/5 Active`;
             }
+            const diagDev = document.getElementById('diagDevicesText');
+            if (diagDev) {
+                diagDev.textContent = `${onCount} of 5 ON`;
+            }
         }
 
         function highlightCard(num) {
@@ -1263,18 +1467,18 @@
             document.querySelectorAll('.device-card').forEach(c => c.classList.remove('active'));
         }
 
-        function addLogEntry(text, type = 'normal') {
-            const box = document.getElementById('logBox');
-            const div = document.createElement('div');
-            div.className = `log-entry ${type}`;
-            div.textContent = text;
-            box.insertBefore(div, box.firstChild);
-        }
-
-        function clearLogs() {
-            const box = document.getElementById('logBox');
-            box.innerHTML = '';
-            addLogEntry('Log cleared.', 'normal');
+        async function clearLogs() {
+            try {
+                const res = await fetch(apiUrl('api/logs/clear'), { method: 'POST' });
+                const d = await res.json();
+                if (Array.isArray(d.logs)) {
+                    allLogs = d.logs;
+                    renderLogs();
+                }
+            } catch (e) {
+                allLogs = [];
+                renderLogs();
+            }
         }
 
         async function toggleDevice(num) {
@@ -1286,59 +1490,16 @@
                 });
                 const d = await res.json();
                 if (d.entity_states) updateStates(d.entity_states);
+                if (Array.isArray(d.logs)) {
+                    allLogs = d.logs;
+                    renderLogs();
+                }
             } catch (e) {
                 console.error(e);
             }
         }
 
-        async function openSettings() {
-            try {
-                const res = await fetch(apiUrl('config'));
-                const cfg = await res.json();
-                document.getElementById('inputModel').value = cfg.openai_model || 'gpt-4o-mini';
-                document.getElementById('inputRtsp').value = cfg.rtsp_url || '';
-                document.getElementById('settingsModal').style.display = 'flex';
-            } catch (e) {
-                document.getElementById('settingsModal').style.display = 'flex';
-            }
-        }
-
-        function closeSettings() {
-            document.getElementById('settingsModal').style.display = 'none';
-        }
-
-        function handleOverlayClick(e) {
-            if (e.target.id === 'settingsModal') closeSettings();
-        }
-
-        async function saveSettings() {
-            const modelVal = document.getElementById('inputModel').value.trim();
-            const payload = {
-                openai_model: modelVal,
-                rtsp_url: document.getElementById('inputRtsp').value.trim()
-            };
-            const key = document.getElementById('inputApiKey').value.trim();
-            if (key) payload.openai_api_key = key;
-
-            const haUrl = document.getElementById('inputHaUrl').value.trim();
-            if (haUrl) payload.ha_url = haUrl;
-
-            const haToken = document.getElementById('inputHaToken').value.trim();
-            if (haToken) payload.ha_token = haToken;
-
-            await fetch(apiUrl('api/settings'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            if (modelVal) {
-                document.getElementById('badgeAi').textContent = modelVal;
-            }
-            closeSettings();
-        }
-
-        // Load initial configuration and health status
+        // Load initial configuration
         fetch(apiUrl('config')).then(r => r.json()).then(cfg => {
             if (cfg.openai_model) {
                 document.getElementById('badgeAi').textContent = cfg.openai_model;
@@ -1354,6 +1515,7 @@
             }
         }).catch(() => {});
 
+        // Poll /health every 1.2s for live hand detection telemetry, FPS, HA states & persistent logs
         function syncHealth() {
             fetch(apiUrl('health')).then(r => r.json()).then(h => {
                 if (typeof h.ha_connected === 'boolean') {
@@ -1362,10 +1524,17 @@
                 if (h.entity_states) {
                     updateStates(h.entity_states);
                 }
+                updateDiagnostics(h);
+                if (Array.isArray(h.logs)) {
+                    if (h.logs.length !== allLogs.length || (h.logs[0] && (!allLogs[0] || h.logs[0].id !== allLogs[0].id))) {
+                        allLogs = h.logs;
+                        renderLogs();
+                    }
+                }
             }).catch(() => {});
         }
         syncHealth();
-        setInterval(syncHealth, 5000);
+        setInterval(syncHealth, 1200);
     </script>
 </body>
 </html>

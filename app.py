@@ -35,6 +35,38 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gesture-ai-addon")
 
+# ========== PERSISTENT EVENT & AUDIT LOG HISTORY ==========
+EVENT_HISTORY: deque = deque(maxlen=120)
+_EVENT_ID_COUNTER = 0
+_EVENT_LOCK = threading.Lock()
+
+
+def record_log(
+    log_type: str,
+    title: str,
+    detail: str = "",
+    gesture: str = "",
+    entity: str = "",
+    latency_ms: float = 0.0
+) -> Dict[str, Any]:
+    """Record a structured event in memory so the Web UI always shows full history & logs."""
+    global _EVENT_ID_COUNTER
+    with _EVENT_LOCK:
+        _EVENT_ID_COUNTER += 1
+        entry = {
+            "id": _EVENT_ID_COUNTER,
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "timestamp": datetime.now().isoformat(),
+            "type": log_type,  # verified | revoked | detected | reset | action | camera | system
+            "title": title,
+            "detail": detail,
+            "gesture": gesture,
+            "entity": entity,
+            "latency_ms": latency_ms,
+        }
+        EVENT_HISTORY.appendleft(entry)
+    return entry
+
 # ========== CONFIGURATION ==========
 BASE_DIR = Path(__file__).resolve().parent
 ENV_PATH = BASE_DIR / ".env"
@@ -496,12 +528,16 @@ class HAClient:
                 async with aiohttp.ClientSession() as sess:
                     async with sess.get(api_url, headers=self.get_headers(), timeout=4.0) as resp:
                         if resp.status == 200:
+                            if not self.connected:
+                                record_log("system", "Home Assistant Connected", f"REST API online at {self.url}")
                             self.connected = True
                             logger.info(f"Connected to Home Assistant REST API at {self.url}")
                             await self.sync_states()
                             return True
                         else:
                             logger.warning(f"HA REST API returned HTTP {resp.status}")
+                            if self.connected:
+                                record_log("system", "Home Assistant Disconnected", f"HTTP {resp.status} from {self.url}")
                             self.connected = False
                             return False
             except Exception as e:
@@ -713,6 +749,7 @@ class CameraStreamReader:
                     frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
                 if not self.first_frame_logged:
                     logger.info(f"📹 First camera frame received ({fw}x{fh} -> {target_w}x{target_h})")
+                    record_log("camera", "Camera Stream Online", f"Receiving live video frames ({fw}x{fh} -> {target_w}x{target_h})")
                     self.first_frame_logged = True
                 with self.lock:
                     self.latest_frame = frame
@@ -721,6 +758,7 @@ class CameraStreamReader:
             else:
                 if time.time() - self.last_frame_time > 5.0:
                     logger.warning("Camera stream stalled for > 5s, reconnecting...")
+                    record_log("camera", "Camera Stream Reconnecting", "Stream stalled > 5s, re-opening camera source...")
                     self._open()
                     self.last_frame_time = time.time()
                 time.sleep(0.01)
@@ -769,6 +807,8 @@ class GestureProcessor:
         self.history = deque(maxlen=self.stability_target)
         self.current_stable_gesture: Optional[int] = None
         self.hand_detected = False
+        self.live_detected_count: int = -1
+        self.live_gesture_label: str = "No Hand"
         self.stability_ratio = 0.0
 
         # Strict capture rate limiting & non-overlapping execution
@@ -1051,6 +1091,14 @@ class GestureProcessor:
                 detected_count = best_hand["count"]
                 bbox = best_hand["bbox"]
                 other_bboxes = [h["bbox"] for h in hand_candidates if h["bbox"] and h is not best_hand]
+                self.live_detected_count = detected_count
+                if detected_count > 0:
+                    g_name, g_icon = self.get_gesture_display(detected_count)
+                    self.live_gesture_label = f"{g_name} {g_icon}"
+                elif fist_detected:
+                    self.live_gesture_label = "Fist ✊ (Reset)"
+                else:
+                    self.live_gesture_label = "Hand Rested"
 
                 # 3. Render tracking bounding boxes and labels for ALL hands on screen
                 for h_data in hand_candidates:
@@ -1096,6 +1144,7 @@ class GestureProcessor:
                     self.history.clear()
                     self.current_stable_gesture = None
                     logger.info("✊ Pipeline RESET by FIST gesture on detected hand! System READY for next gesture.")
+                    record_log("reset", "Pipeline Reset (Fist ✊)", "System unlocked and ready for next gesture (1–5 fingers).")
                     if self.sio and self.loop:
                         asyncio.run_coroutine_threadsafe(
                             self.sio.emit("pipeline_reset", {"reason": "FIST", "state": "READY"}),
@@ -1107,6 +1156,7 @@ class GestureProcessor:
                     self.history.clear()
                     self.current_stable_gesture = None
                     logger.info("🖐️ Pipeline RESET: Gesture hand lowered/rested! System READY for next gesture.")
+                    record_log("reset", "Pipeline Reset (Hand Rested)", "System unlocked and ready for next gesture (1–5 fingers).")
                     if self.sio and self.loop:
                         asyncio.run_coroutine_threadsafe(
                             self.sio.emit("pipeline_reset", {"reason": "REST", "state": "READY"}),
@@ -1126,6 +1176,8 @@ class GestureProcessor:
                     self.stability_ratio = 0.0
             else:
                 self.hand_detected = False
+                self.live_detected_count = -1
+                self.live_gesture_label = "No Hand"
                 self.history.clear()
                 self.current_stable_gesture = None
                 self.stability_ratio = 0.0
@@ -1140,6 +1192,7 @@ class GestureProcessor:
                     self.history.clear()
                     self.current_stable_gesture = None
                     logger.info("🖐️ Pipeline RESET by resting hand (hand lowered/removed)! System READY for next gesture.")
+                    record_log("reset", "Pipeline Reset (Hand Lowered)", "System unlocked and ready for next gesture (1–5 fingers).")
                     if self.sio and self.loop:
                         asyncio.run_coroutine_threadsafe(
                             self.sio.emit("pipeline_reset", {"reason": "REST", "state": "READY"}),
@@ -1163,6 +1216,12 @@ class GestureProcessor:
                     if ratio >= 0.80 and stable_count > 0:
                         gesture_name, gesture_icon = self.get_gesture_display(stable_count)
                         logger.info(f"📸 Candidate Gesture Stabilized: {gesture_name} ({stable_count} fingers). Capturing snapshot for ChatGPT AI...")
+                        record_log(
+                            "detected",
+                            f"Candidate Gesture: {gesture_name} {gesture_icon}",
+                            f"Held steady ({stable_count} fingers). Captured snapshot for ChatGPT Vision verification.",
+                            gesture=gesture_name
+                        )
 
                         # ATOMIC LOCK: Lock immediately in main thread before launching verification
                         self.is_verifying_in_progress = True
@@ -1311,6 +1370,14 @@ class GestureProcessor:
                 self.pipeline_state = "WAITING_FOR_RESET"
                 self.last_triggered_gesture = gesture_name
                 logger.info(f"🔒 Triggered {gesture_name}! Locked in WAITING_FOR_RESET until user shows FIST ✊ or RESTS hand.")
+                record_log(
+                    "verified",
+                    f"Verified: {gesture_name} → {action_text}",
+                    f"{explanation} (Make a Fist ✊ or lower hand to reset)",
+                    gesture=gesture_name,
+                    entity=self.ha_client.entities.get(f"entity_{finger_count}", ""),
+                    latency_ms=latency
+                )
 
                 if self.sio and self.loop:
                     asyncio.run_coroutine_threadsafe(
@@ -1329,6 +1396,13 @@ class GestureProcessor:
             else:
                 logger.warning(f"🚫 GESTURE REVOKED BY CHATGPT: False Trigger Prevented! Reason: {reason} | {explanation}")
                 self.pipeline_state = "READY"
+                record_log(
+                    "revoked",
+                    f"Blocked False Trigger: {gesture_name}",
+                    f"Reason: {reason} — {explanation}",
+                    gesture=gesture_name,
+                    latency_ms=latency
+                )
 
                 if self.sio and self.loop:
                     asyncio.run_coroutine_threadsafe(
@@ -1399,6 +1473,7 @@ class GestureServer:
         self.app.router.add_get("/config", self.get_config)
         self.app.router.add_post("/api/toggle", self.api_toggle)
         self.app.router.add_post("/api/settings", self.api_settings)
+        self.app.router.add_post("/api/logs/clear", self.api_clear_logs)
         self.app.router.add_static("/static", str(BASE_DIR / "web"))
         # Catch-all route for HA Ingress (e.g. GET ////, /api/hassio_ingress/<token>/..., or any custom /path)
         self.app.router.add_route("*", "/{tail:.*}", self.catch_all_handler)
@@ -1424,6 +1499,8 @@ class GestureServer:
             return await self.api_toggle(request)
         if clean_path.endswith("/api/settings") and request.method == "POST":
             return await self.api_settings(request)
+        if clean_path.endswith("/api/logs/clear") and request.method == "POST":
+            return await self.api_clear_logs(request)
         return await self.serve_index(request)
 
     def _setup_sockets(self):
@@ -1530,15 +1607,30 @@ class GestureServer:
         return aiohttp.web.Response(body=j.tobytes(), content_type="image/jpeg")
 
     async def health_check(self, request):
+        gp = self.gesture_processor
+        cam_ok = gp.camera_reader.is_connected if (gp and gp.camera_reader) else False
         return aiohttp.web.json_response({
             "status": "ok",
             "ha_connected": self.ha_client.connected if self.ha_client else False,
             "entity_states": self.ha_client.entity_states if self.ha_client else {},
             "ai_verification_enabled": config.get("ai_verification_enabled", True),
-            "camera_running": self.gesture_processor.running if self.gesture_processor else False,
-            "fps": self.gesture_processor.current_fps if self.gesture_processor else 0,
+            "camera_running": gp.running if gp else False,
+            "camera_connected": cam_ok,
+            "fps": gp.current_fps if gp else 0,
+            "hand_detected": gp.hand_detected if gp else False,
+            "live_fingers": gp.live_detected_count if gp else -1,
+            "live_gesture": gp.live_gesture_label if gp else "No Hand",
+            "pipeline_state": ("ANALYZING" if (gp and gp.is_verifying_in_progress) else (gp.pipeline_state if gp else "READY")),
+            "stability_progress": int((gp.stability_ratio if gp else 0.0) * 100),
+            "logs": list(EVENT_HISTORY),
             "uptime": datetime.now().isoformat()
         })
+
+    async def api_clear_logs(self, request):
+        with _EVENT_LOCK:
+            EVENT_HISTORY.clear()
+        record_log("system", "Activity Log Cleared", "Log history reset by user.")
+        return aiohttp.web.json_response({"success": True, "logs": list(EVENT_HISTORY)})
 
     async def get_config(self, request):
         return aiohttp.web.json_response({
@@ -1565,9 +1657,15 @@ class GestureServer:
         eid = config.get(f"entity_{num}", "")
         if self.ha_client and eid:
             success = await self.ha_client.toggle_entity(num, eid)
+            new_st = self.ha_client.entity_states.get(f"entity_{num}", "off").upper()
+            if success:
+                record_log("action", f"Manual Toggle: {eid} → {new_st}", f"Device {num} toggled manually via Web UI.", entity=eid)
+            else:
+                record_log("system", f"Toggle Skipped / Failed: {eid}", "Cooldown active or Home Assistant unreachable.", entity=eid)
             return aiohttp.web.json_response({
                 "success": success,
-                "entity_states": self.ha_client.entity_states
+                "entity_states": self.ha_client.entity_states,
+                "logs": list(EVENT_HISTORY)
             })
         return aiohttp.web.json_response({"success": False, "error": "Invalid entity"})
 
@@ -1586,6 +1684,11 @@ class GestureServer:
         logger.info(f"💡 Entities: 1={config.get('entity_1')}, 2={config.get('entity_2')}, 3={config.get('entity_3')}, 4={config.get('entity_4')}, 5={config.get('entity_5')}")
         logger.info(f"🔌 HA URL: {config.get('ha_url')}")
         logger.info("=" * 60)
+        record_log(
+            "system",
+            "System Initialized",
+            f"MediaPipe 3D Hands + ChatGPT Vision ({config.get('openai_model')}) active."
+        )
 
         # Initialize HA Client
         entities = {f"entity_{i}": config.get(f"entity_{i}", "") for i in range(1, 6)}
