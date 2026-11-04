@@ -35,10 +35,33 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gesture-ai-addon")
 
-# ========== PERSISTENT EVENT & AUDIT LOG HISTORY ==========
-EVENT_HISTORY: deque = deque(maxlen=120)
+# ========== IN-MEMORY TRIGGER & SNAPSHOT CACHE (CLEARS ON ADD-ON RESTART) ==========
+SESSION_ID: str = str(int(time.time() * 1000))
+EVENT_HISTORY: deque = deque(maxlen=40)
+SNAPSHOT_CACHE: Dict[int, bytes] = {}
 _EVENT_ID_COUNTER = 0
 _EVENT_LOCK = threading.Lock()
+
+
+def _make_thumbnail_b64(jpeg_bytes: Optional[bytes]) -> str:
+    """Create a compact base64 JPEG thumbnail for instant rendering inside the History dropdown."""
+    if not jpeg_bytes:
+        return ""
+    try:
+        arr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img is None or img.size == 0:
+            return ""
+        h, w = img.shape[:2]
+        target_w = 260
+        target_h = max(80, int(h * (target_w / float(w))))
+        thumb = cv2.resize(img, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        ok, buf = cv2.imencode(".jpg", thumb, [cv2.IMWRITE_JPEG_QUALITY, 72])
+        if ok:
+            return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
+    except Exception:
+        pass
+    return ""
 
 
 def record_log(
@@ -47,24 +70,43 @@ def record_log(
     detail: str = "",
     gesture: str = "",
     entity: str = "",
-    latency_ms: float = 0.0
+    latency_ms: float = 0.0,
+    snapshot_bytes: Optional[bytes] = None
 ) -> Dict[str, Any]:
-    """Record a structured event in memory so the Web UI always shows full history & logs."""
+    """Record gesture trigger & snapshot in RAM cache (persists while add-on runs, clears on stop/start)."""
     global _EVENT_ID_COUNTER
+    # Only store gesture triggers & manual device actions in History
+    if log_type not in ("verified", "revoked", "action"):
+        return {}
+
+    thumb_b64 = _make_thumbnail_b64(snapshot_bytes)
     with _EVENT_LOCK:
         _EVENT_ID_COUNTER += 1
+        entry_id = _EVENT_ID_COUNTER
+        if snapshot_bytes:
+            SNAPSHOT_CACHE[entry_id] = snapshot_bytes
+
         entry = {
-            "id": _EVENT_ID_COUNTER,
+            "id": entry_id,
             "time": datetime.now().strftime("%H:%M:%S"),
             "timestamp": datetime.now().isoformat(),
-            "type": log_type,  # verified | revoked | detected | reset | action | camera | system
+            "type": log_type,  # verified | revoked | action
             "title": title,
             "detail": detail,
             "gesture": gesture,
             "entity": entity,
             "latency_ms": latency_ms,
+            "has_snapshot": bool(snapshot_bytes),
+            "snapshot_b64": thumb_b64,
         }
         EVENT_HISTORY.appendleft(entry)
+
+        # Prune evicted snapshots from RAM cache
+        active_ids = {item["id"] for item in EVENT_HISTORY}
+        for old_id in list(SNAPSHOT_CACHE.keys()):
+            if old_id not in active_ids:
+                SNAPSHOT_CACHE.pop(old_id, None)
+
     return entry
 
 # ========== CONFIGURATION ==========
@@ -367,6 +409,12 @@ class ChatGPTVerifier:
 
         if not api_key:
             logger.warning("No OpenAI API key configured, bypassing AI verification")
+            try:
+                composite_snapshot = make_dual_view(frame_bgr, bbox, other_bboxes=other_bboxes)
+                _, buf = cv2.imencode(".jpg", composite_snapshot, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                self.latest_snapshot_bytes = buf.tobytes()
+            except Exception:
+                pass
             return {
                 "is_valid_gesture": True,
                 "is_false_trigger": False,
@@ -1376,7 +1424,8 @@ class GestureProcessor:
                     f"{explanation} (Make a Fist ✊ or lower hand to reset)",
                     gesture=gesture_name,
                     entity=self.ha_client.entities.get(f"entity_{finger_count}", ""),
-                    latency_ms=latency
+                    latency_ms=latency,
+                    snapshot_bytes=chatgpt_verifier.latest_snapshot_bytes
                 )
 
                 if self.sio and self.loop:
@@ -1401,7 +1450,8 @@ class GestureProcessor:
                     f"Blocked False Trigger: {gesture_name}",
                     f"Reason: {reason} — {explanation}",
                     gesture=gesture_name,
-                    latency_ms=latency
+                    latency_ms=latency,
+                    snapshot_bytes=chatgpt_verifier.latest_snapshot_bytes
                 )
 
                 if self.sio and self.loop:
@@ -1469,6 +1519,7 @@ class GestureServer:
         self.app.router.add_get("/ws/video", self.video_ws)
         self.app.router.add_get("/frame", self.get_latest_frame)
         self.app.router.add_get("/snapshot/latest", self.get_latest_snapshot)
+        self.app.router.add_get("/snapshot/history/{event_id}", self.get_history_snapshot)
         self.app.router.add_get("/health", self.health_check)
         self.app.router.add_get("/config", self.get_config)
         self.app.router.add_post("/api/toggle", self.api_toggle)
@@ -1491,6 +1542,8 @@ class GestureServer:
             return await self.video_stream(request)
         if clean_path.endswith("/snapshot/latest"):
             return await self.get_latest_snapshot(request)
+        if "/snapshot/history/" in clean_path:
+            return await self.get_history_snapshot(request)
         if clean_path.endswith("/health"):
             return await self.health_check(request)
         if clean_path.endswith("/config"):
@@ -1595,42 +1648,79 @@ class GestureServer:
 
     async def get_latest_snapshot(self, request):
         """Return the latest analyzed snapshot image with verification result overlay."""
+        headers = {
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache"
+        }
         if chatgpt_verifier.latest_snapshot_bytes:
             return aiohttp.web.Response(
                 body=chatgpt_verifier.latest_snapshot_bytes,
-                content_type="image/jpeg"
+                content_type="image/jpeg",
+                headers=headers
             )
         # Return fallback light-themed placeholder image
         blank = np.full((120, 160, 3), (249, 245, 241), dtype=np.uint8)
         cv2.putText(blank, "No Snapshot", (30, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (139, 116, 100), 1, cv2.LINE_AA)
         _, j = cv2.imencode(".jpg", blank)
-        return aiohttp.web.Response(body=j.tobytes(), content_type="image/jpeg")
+        return aiohttp.web.Response(body=j.tobytes(), content_type="image/jpeg", headers=headers)
+
+    async def get_history_snapshot(self, request):
+        """Return a specific trigger snapshot from the in-memory session cache."""
+        headers = {
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache"
+        }
+        event_id_str = request.match_info.get("event_id")
+        if not event_id_str:
+            m = re.search(r"/snapshot/history/(\d+)", request.path)
+            if m:
+                event_id_str = m.group(1)
+        try:
+            event_id = int(event_id_str)
+            snap_bytes = SNAPSHOT_CACHE.get(event_id)
+            if snap_bytes:
+                return aiohttp.web.Response(
+                    body=snap_bytes,
+                    content_type="image/jpeg",
+                    headers=headers
+                )
+        except Exception:
+            pass
+        return await self.get_latest_snapshot(request)
 
     async def health_check(self, request):
         gp = self.gesture_processor
         cam_ok = gp.camera_reader.is_connected if (gp and gp.camera_reader) else False
-        return aiohttp.web.json_response({
-            "status": "ok",
-            "ha_connected": self.ha_client.connected if self.ha_client else False,
-            "entity_states": self.ha_client.entity_states if self.ha_client else {},
-            "ai_verification_enabled": config.get("ai_verification_enabled", True),
-            "camera_running": gp.running if gp else False,
-            "camera_connected": cam_ok,
-            "fps": gp.current_fps if gp else 0,
-            "hand_detected": gp.hand_detected if gp else False,
-            "live_fingers": gp.live_detected_count if gp else -1,
-            "live_gesture": gp.live_gesture_label if gp else "No Hand",
-            "pipeline_state": ("ANALYZING" if (gp and gp.is_verifying_in_progress) else (gp.pipeline_state if gp else "READY")),
-            "stability_progress": int((gp.stability_ratio if gp else 0.0) * 100),
-            "logs": list(EVENT_HISTORY),
-            "uptime": datetime.now().isoformat()
-        })
+        return aiohttp.web.json_response(
+            {
+                "status": "ok",
+                "session_id": SESSION_ID,
+                "ha_connected": self.ha_client.connected if self.ha_client else False,
+                "entity_states": self.ha_client.entity_states if self.ha_client else {},
+                "ai_verification_enabled": config.get("ai_verification_enabled", True),
+                "camera_running": gp.running if gp else False,
+                "camera_connected": cam_ok,
+                "fps": gp.current_fps if gp else 0,
+                "hand_detected": gp.hand_detected if gp else False,
+                "live_fingers": gp.live_detected_count if gp else -1,
+                "live_gesture": gp.live_gesture_label if gp else "No Hand",
+                "pipeline_state": ("ANALYZING" if (gp and gp.is_verifying_in_progress) else (gp.pipeline_state if gp else "READY")),
+                "stability_progress": int((gp.stability_ratio if gp else 0.0) * 100),
+                "logs": list(EVENT_HISTORY),
+                "uptime": datetime.now().isoformat()
+            },
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache"
+            }
+        )
 
     async def api_clear_logs(self, request):
         with _EVENT_LOCK:
             EVENT_HISTORY.clear()
-        record_log("system", "Activity Log Cleared", "Log history reset by user.")
-        return aiohttp.web.json_response({"success": True, "logs": list(EVENT_HISTORY)})
+            SNAPSHOT_CACHE.clear()
+        chatgpt_verifier.latest_snapshot_bytes = None
+        return aiohttp.web.json_response({"success": True, "logs": []})
 
     async def get_config(self, request):
         return aiohttp.web.json_response({
@@ -1659,9 +1749,17 @@ class GestureServer:
             success = await self.ha_client.toggle_entity(num, eid)
             new_st = self.ha_client.entity_states.get(f"entity_{num}", "off").upper()
             if success:
-                record_log("action", f"Manual Toggle: {eid} → {new_st}", f"Device {num} toggled manually via Web UI.", entity=eid)
-            else:
-                record_log("system", f"Toggle Skipped / Failed: {eid}", "Cooldown active or Home Assistant unreachable.", entity=eid)
+                live_snap = None
+                if self.gesture_processor:
+                    with self.gesture_processor.frame_lock:
+                        live_snap = self.gesture_processor.latest_jpeg_bytes
+                record_log(
+                    "action",
+                    f"Manual Toggle: {eid} → {new_st}",
+                    f"Device {num} toggled manually via Web UI.",
+                    entity=eid,
+                    snapshot_bytes=live_snap
+                )
             return aiohttp.web.json_response({
                 "success": success,
                 "entity_states": self.ha_client.entity_states,

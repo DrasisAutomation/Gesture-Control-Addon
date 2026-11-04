@@ -55,6 +55,11 @@
             -webkit-tap-highlight-color: transparent;
         }
 
+        html, body {
+            max-width: 100%;
+            overflow-x: hidden;
+        }
+
         body {
             background-color: var(--bg-page);
             color: var(--text-primary);
@@ -64,7 +69,6 @@
             flex-direction: column;
             line-height: 1.5;
             -webkit-font-smoothing: antialiased;
-            overflow-x: hidden;
         }
 
         /* Top Navigation Header */
@@ -202,8 +206,9 @@
 
         .diagnostics-grid {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(4, minmax(0, 1fr));
             gap: 10px;
+            width: 100%;
         }
 
         .diag-pill {
@@ -212,16 +217,19 @@
             border-radius: var(--radius-md);
             padding: 10px 14px;
             display: flex;
-            align-items: center;
+            flex-direction: column;
+            align-items: stretch;
             justify-content: space-between;
-            gap: 10px;
+            gap: 6px;
+            min-width: 0;
             box-shadow: var(--shadow-xs);
         }
 
-        .diag-left {
+        .diag-top {
             display: flex;
-            flex-direction: column;
-            gap: 2px;
+            align-items: center;
+            justify-content: space-between;
+            gap: 6px;
             min-width: 0;
         }
 
@@ -231,6 +239,10 @@
             text-transform: uppercase;
             letter-spacing: 0.04em;
             color: var(--text-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            min-width: 0;
         }
 
         .diag-value {
@@ -240,17 +252,21 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            min-width: 0;
+            line-height: 1.3;
         }
 
         .diag-indicator {
             font-family: 'JetBrains Mono', monospace;
-            font-size: 11px;
+            font-size: 10.5px;
             font-weight: 600;
-            padding: 3px 8px;
+            padding: 2px 7px;
             border-radius: var(--radius-full);
             background: var(--bg-subtle);
             color: var(--text-secondary);
             flex-shrink: 0;
+            white-space: nowrap;
+            line-height: 1.4;
         }
 
         .diag-indicator.ok {
@@ -278,7 +294,7 @@
             margin: 0 auto;
             padding: 14px 20px 24px;
             display: grid;
-            grid-template-columns: 1.12fr 0.88fr;
+            grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
             gap: 18px;
             flex: 1;
             align-items: start;
@@ -652,9 +668,8 @@
             background: var(--bg-subtle);
         }
 
-        /* Collapsible Gesture Trigger History Dropdown */
+        /* Collapsible Gesture Trigger History Dropdown (In-Memory Session Cache) */
         .history-dropdown {
-            border-bottom: 1px solid var(--border-subtle);
             background: var(--bg-surface);
         }
 
@@ -670,6 +685,7 @@
             justify-content: space-between;
             user-select: none;
             background: var(--bg-subtle);
+            border-bottom: 1px solid var(--border-subtle);
         }
 
         .history-dropdown summary::-webkit-details-marker {
@@ -687,20 +703,9 @@
         }
 
         .history-dropdown-body {
-            max-height: 155px;
+            max-height: 340px;
             overflow-y: auto;
-            padding: 10px 12px;
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            background: var(--bg-surface);
-        }
-
-        /* Full Activity & System Log List */
-        .log-box {
             padding: 12px;
-            height: 270px;
-            overflow-y: auto;
             display: flex;
             flex-direction: column;
             gap: 8px;
@@ -708,14 +713,49 @@
         }
 
         .log-item {
-            padding: 9px 12px;
+            padding: 10px 12px;
             border-radius: var(--radius-sm);
             background: var(--bg-surface);
             border: 1px solid var(--border-subtle);
             display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            box-shadow: var(--shadow-xs);
+            cursor: pointer;
+            transition: border-color 0.15s ease, background 0.15s ease;
+        }
+
+        .log-item:hover {
+            border-color: var(--border-focus);
+            background: var(--bg-subtle);
+        }
+
+        .log-thumb {
+            width: 86px;
+            height: 60px;
+            border-radius: 6px;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-subtle);
+            overflow: hidden;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .log-thumb img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .log-content {
+            flex: 1;
+            min-width: 0;
+            display: flex;
             flex-direction: column;
             gap: 4px;
-            box-shadow: var(--shadow-xs);
         }
 
         .log-item-top {
@@ -804,11 +844,11 @@
         /* Responsive Mobile & Tablet Breakpoints */
         @media (max-width: 960px) {
             .diagnostics-grid {
-                grid-template-columns: repeat(2, 1fr);
+                grid-template-columns: repeat(2, minmax(0, 1fr));
             }
 
             .workspace {
-                grid-template-columns: 1fr;
+                grid-template-columns: minmax(0, 1fr);
                 padding: 12px 14px 20px;
                 gap: 14px;
             }
@@ -820,7 +860,22 @@
 
         @media (max-width: 600px) {
             .header-inner {
-                padding: 10px 14px;
+                padding: 10px 12px;
+                gap: 8px;
+            }
+
+            .brand {
+                gap: 9px;
+            }
+
+            .brand-logo {
+                width: 32px;
+                height: 32px;
+                border-radius: 8px;
+            }
+
+            .brand-titles h1 {
+                font-size: 14px;
             }
 
             .brand-titles p {
@@ -831,18 +886,34 @@
                 display: none;
             }
 
+            .status-chip {
+                padding: 4px 9px;
+                font-size: 11px;
+            }
+
             .diagnostics-strip {
                 padding: 0 10px;
                 margin-top: 10px;
             }
 
             .diagnostics-grid {
-                grid-template-columns: 1fr 1fr;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
                 gap: 8px;
             }
 
             .diag-pill {
-                padding: 8px 10px;
+                padding: 9px 10px;
+                gap: 4px;
+            }
+
+            .diag-label {
+                font-size: 9.5px;
+                letter-spacing: 0.03em;
+            }
+
+            .diag-indicator {
+                font-size: 9.5px;
+                padding: 2px 6px;
             }
 
             .diag-value {
@@ -854,14 +925,23 @@
                 gap: 12px;
             }
 
+            .card-header {
+                padding: 10px 12px;
+                gap: 8px;
+            }
+
+            .card-title {
+                font-size: 12.5px;
+            }
+
             .video-wrapper {
                 padding: 6px;
             }
 
             .ai-body {
-                grid-template-columns: 1fr;
+                grid-template-columns: minmax(0, 1fr);
                 gap: 12px;
-                padding: 14px;
+                padding: 12px;
             }
 
             .snapshot-preview {
@@ -869,8 +949,55 @@
                 height: 150px;
             }
 
+            .devices-list {
+                padding: 10px;
+            }
+
             .device-card {
                 padding: 10px 12px;
+                gap: 10px;
+            }
+
+            .log-controls {
+                width: 100%;
+                justify-content: space-between;
+            }
+
+            .log-filter-select {
+                flex: 1;
+                min-width: 0;
+            }
+
+            .log-item {
+                gap: 10px;
+                padding: 9px 10px;
+            }
+
+            .log-thumb {
+                width: 72px;
+                height: 52px;
+            }
+
+            .log-item-top {
+                align-items: flex-start;
+                flex-wrap: wrap;
+                gap: 4px;
+            }
+
+            .log-badge-group {
+                flex-wrap: wrap;
+                gap: 4px;
+            }
+
+            .log-title {
+                white-space: normal;
+                word-break: break-word;
+            }
+        }
+
+        @media (max-width: 360px) {
+            .diagnostics-grid {
+                grid-template-columns: minmax(0, 1fr);
             }
         }
     </style>
@@ -909,35 +1036,35 @@
     <section class="diagnostics-strip" aria-label="System Status">
         <div class="diagnostics-grid">
             <div class="diag-pill">
-                <div class="diag-left">
+                <div class="diag-top">
                     <span class="diag-label">Camera Feed</span>
-                    <span class="diag-value" id="diagCamText">Connecting...</span>
+                    <span class="diag-indicator warn" id="diagFpsBadge">-- FPS</span>
                 </div>
-                <span class="diag-indicator warn" id="diagFpsBadge">-- FPS</span>
+                <span class="diag-value" id="diagCamText">Connecting...</span>
             </div>
 
             <div class="diag-pill">
-                <div class="diag-left">
+                <div class="diag-top">
                     <span class="diag-label">Hand Detection</span>
-                    <span class="diag-value" id="diagHandText">Scanning...</span>
+                    <span class="diag-indicator" id="diagHoldBadge">0%</span>
                 </div>
-                <span class="diag-indicator" id="diagHoldBadge">0%</span>
+                <span class="diag-value" id="diagHandText">Scanning...</span>
             </div>
 
             <div class="diag-pill">
-                <div class="diag-left">
+                <div class="diag-top">
                     <span class="diag-label">Pipeline State</span>
-                    <span class="diag-value" id="diagPipelineText">Ready</span>
+                    <span class="diag-indicator ok" id="diagPipelineBadge">READY</span>
                 </div>
-                <span class="diag-indicator ok" id="diagPipelineBadge">READY</span>
+                <span class="diag-value" id="diagPipelineText">Ready</span>
             </div>
 
             <div class="diag-pill">
-                <div class="diag-left">
+                <div class="diag-top">
                     <span class="diag-label">Smart Devices</span>
-                    <span class="diag-value" id="diagDevicesText">0 of 5 ON</span>
+                    <span class="diag-indicator" id="diagHaBadge">SYNCED</span>
                 </div>
-                <span class="diag-indicator" id="diagHaBadge">SYNCED</span>
+                <span class="diag-value" id="diagDevicesText">0 of 5 ON</span>
             </div>
         </div>
     </section>
@@ -1088,42 +1215,36 @@
                 </div>
             </section>
 
-            <!-- History Dropdown & Live System Logs -->
+            <!-- Gesture Trigger History Dropdown (In-Memory Session Cache) -->
             <section class="surface-card">
                 <div class="card-header">
                     <div class="card-title">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
                         </svg>
-                        <span>History & Activity Logs</span>
+                        <span>Gesture Trigger History</span>
                     </div>
                     <div class="log-controls">
-                        <select id="logFilterSelect" class="log-filter-select" onchange="renderLogs()" aria-label="Filter logs">
-                            <option value="all">All Logs</option>
+                        <select id="logFilterSelect" class="log-filter-select" onchange="renderLogs()" aria-label="Filter trigger history">
+                            <option value="all">All Triggers</option>
                             <option value="verified">Verified Triggers</option>
                             <option value="revoked">Blocked Triggers</option>
-                            <option value="detected">Detections & Resets</option>
-                            <option value="system">Camera & System</option>
+                            <option value="action">Manual Toggles</option>
                         </select>
                         <button class="btn-clear-log" onclick="clearLogs()">Clear</button>
                     </div>
                 </div>
 
-                <!-- Collapsible Gesture Trigger History Dropdown -->
+                <!-- Collapsible Gesture Trigger History Dropdown (with Snapshots & Trigger Logs) -->
                 <details class="history-dropdown" open>
                     <summary>
                         <span id="triggerHistorySummary">Recent Gesture Trigger History (0)</span>
                         <span class="chevron">▼</span>
                     </summary>
                     <div class="history-dropdown-body" id="triggerHistoryList">
-                        <div class="empty-state">No gesture triggers recorded yet. Show 1–5 fingers to the camera.</div>
+                        <div class="empty-state">No gesture triggers recorded in this session yet. Show 1–5 fingers to the camera.</div>
                     </div>
                 </details>
-
-                <!-- Detailed Scrollable System & Event Logs -->
-                <div class="log-box" id="logBox">
-                    <div class="empty-state">Loading live system logs...</div>
-                </div>
             </section>
         </div>
 
@@ -1215,8 +1336,9 @@
             } catch (e) {}
         }
 
-        // Centralized logs state synced with backend
+        // Centralized in-memory session logs state synced with backend RAM cache
         let allLogs = [];
+        let currentSessionId = null;
 
         function setHaBadge(connected) {
             const badge = document.getElementById('badgeHa');
@@ -1291,60 +1413,64 @@
 
         function renderLogs() {
             const filter = document.getElementById('logFilterSelect').value;
-            const logBox = document.getElementById('logBox');
             const historyList = document.getElementById('triggerHistoryList');
             const historySummary = document.getElementById('triggerHistorySummary');
 
-            // 1. Render Trigger History Dropdown (Verified + Revoked + Manual Actions)
-            const triggerLogs = allLogs.filter(item =>
-                item.type === 'verified' || item.type === 'revoked' || item.type === 'action'
-            );
-            historySummary.textContent = `Recent Gesture Trigger History (${triggerLogs.length})`;
-
-            if (triggerLogs.length === 0) {
-                historyList.innerHTML = '<div class="empty-state">No gesture triggers recorded yet. Show 1–5 fingers to the camera.</div>';
-            } else {
-                historyList.innerHTML = triggerLogs.slice(0, 15).map(item => `
-                    <div class="log-item">
-                        <div class="log-item-top">
-                            <div class="log-badge-group">
-                                <span class="log-badge ${item.type}">${item.type.toUpperCase()}</span>
-                                <span class="log-title">${escapeHtml(item.title)}</span>
-                            </div>
-                            <span class="log-time">${escapeHtml(item.time || '')}${item.latency_ms ? ' · ' + item.latency_ms + 'ms' : ''}</span>
-                        </div>
-                        ${item.detail ? `<div class="log-detail">${escapeHtml(item.detail)}</div>` : ''}
-                    </div>
-                `).join('');
-            }
-
-            // 2. Filter & Render Full Activity Logs List
+            // Filter trigger history (Verified + Revoked + Manual Actions)
             const filtered = allLogs.filter(item => {
                 if (filter === 'all') return true;
-                if (filter === 'verified') return item.type === 'verified' || item.type === 'action';
-                if (filter === 'revoked') return item.type === 'revoked';
-                if (filter === 'detected') return item.type === 'detected' || item.type === 'reset';
-                if (filter === 'system') return item.type === 'system' || item.type === 'camera';
-                return true;
+                return item.type === filter;
             });
 
+            historySummary.textContent = `Recent Gesture Trigger History (${filtered.length})`;
+
             if (filtered.length === 0) {
-                logBox.innerHTML = '<div class="empty-state">No logs matching selected filter.</div>';
+                historyList.innerHTML = '<div class="empty-state">No gesture triggers recorded in this session yet. Show 1–5 fingers to the camera.</div>';
                 return;
             }
 
-            logBox.innerHTML = filtered.map(item => `
-                <div class="log-item">
-                    <div class="log-item-top">
-                        <div class="log-badge-group">
-                            <span class="log-badge ${item.type}">${item.type.toUpperCase()}</span>
-                            <span class="log-title">${escapeHtml(item.title)}</span>
+            historyList.innerHTML = filtered.map(item => {
+                const imgSrc = item.snapshot_b64
+                    ? item.snapshot_b64
+                    : (item.has_snapshot ? apiUrl(`snapshot/history/${item.id}`) : apiUrl('snapshot/latest'));
+
+                return `
+                    <div class="log-item" onclick="previewHistoryItem(${item.id})">
+                        <div class="log-thumb">
+                            <img src="${imgSrc}" alt="Trigger snapshot" loading="lazy">
                         </div>
-                        <span class="log-time">${escapeHtml(item.time || '')}${item.latency_ms ? ' · ' + item.latency_ms + 'ms' : ''}</span>
+                        <div class="log-content">
+                            <div class="log-item-top">
+                                <div class="log-badge-group">
+                                    <span class="log-badge ${item.type}">${item.type.toUpperCase()}</span>
+                                    <span class="log-title">${escapeHtml(item.title)}</span>
+                                </div>
+                                <span class="log-time">${escapeHtml(item.time || '')}${item.latency_ms ? ' · ' + item.latency_ms + 'ms' : ''}</span>
+                            </div>
+                            ${item.detail ? `<div class="log-detail">${escapeHtml(item.detail)}</div>` : ''}
+                        </div>
                     </div>
-                    ${item.detail ? `<div class="log-detail">${escapeHtml(item.detail)}</div>` : ''}
-                </div>
-            `).join('');
+                `;
+            }).join('');
+        }
+
+        function previewHistoryItem(id) {
+            const item = allLogs.find(x => x.id === id);
+            if (!item) return;
+            const snapEl = document.getElementById('aiSnapshotImg');
+            if (item.has_snapshot) {
+                snapEl.src = apiUrl(`snapshot/history/${item.id}?t=${Date.now()}`);
+            } else if (item.snapshot_b64) {
+                snapEl.src = item.snapshot_b64;
+            }
+            document.getElementById('aiVerdictTitle').textContent = item.title || 'Trigger Snapshot';
+            document.getElementById('aiExplanation').textContent = item.detail || '';
+            if (item.latency_ms) {
+                document.getElementById('aiMetaLatency').textContent = `Latency: ${item.latency_ms} ms`;
+            }
+            if (item.gesture) {
+                document.getElementById('aiMetaGesture').textContent = `Candidate: ${item.gesture}`;
+            }
         }
 
         function escapeHtml(str) {
@@ -1471,10 +1597,9 @@
             try {
                 const res = await fetch(apiUrl('api/logs/clear'), { method: 'POST' });
                 const d = await res.json();
-                if (Array.isArray(d.logs)) {
-                    allLogs = d.logs;
-                    renderLogs();
-                }
+                allLogs = Array.isArray(d.logs) ? d.logs : [];
+                document.getElementById('aiSnapshotImg').src = apiUrl(`snapshot/latest?t=${Date.now()}`);
+                renderLogs();
             } catch (e) {
                 allLogs = [];
                 renderLogs();
@@ -1515,9 +1640,21 @@
             }
         }).catch(() => {});
 
-        // Poll /health every 1.2s for live hand detection telemetry, FPS, HA states & persistent logs
+        // Poll /health every 1.2s for live hand detection telemetry, FPS, HA states & in-memory session history
         function syncHealth() {
-            fetch(apiUrl('health')).then(r => r.json()).then(h => {
+            fetch(apiUrl(`health?t=${Date.now()}`), { cache: 'no-store' }).then(r => r.json()).then(h => {
+                // If the add-on was stopped and restarted, session_id changes -> clear cached UI state
+                if (h.session_id && currentSessionId && h.session_id !== currentSessionId) {
+                    allLogs = [];
+                    renderLogs();
+                    document.getElementById('aiSnapshotImg').src = apiUrl(`snapshot/latest?t=${Date.now()}`);
+                    document.getElementById('aiVerdictTitle').textContent = 'Waiting for hand gesture...';
+                    document.getElementById('aiExplanation').textContent = 'Hold 1 to 5 fingers steadily for ~0.4s to trigger verification. Accidental motions are automatically filtered out.';
+                }
+                if (h.session_id) {
+                    currentSessionId = h.session_id;
+                }
+
                 if (typeof h.ha_connected === 'boolean') {
                     setHaBadge(h.ha_connected);
                 }
@@ -1533,6 +1670,7 @@
                 }
             }).catch(() => {});
         }
+        renderLogs();
         syncHealth();
         setInterval(syncHealth, 1200);
     </script>
